@@ -1,13 +1,11 @@
 services:
   app:
-    image: hashicorp/http-echo
-    command: ["-text=hello", "-listen=:8080"]
-    ports: ["8080:8080"]
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"      # clamp service to 1 CPU
-          memory: "256M"   # and a small RAM budget
+    build: ./server_single
+    ports:
+      - "8080:8080"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "256m"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
@@ -23,6 +21,8 @@ services:
     ports: ["9090:9090"]
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+    - cadvisor
 
   grafana:
     image: grafana/grafana-oss:latest
@@ -31,6 +31,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-data:/var/lib/grafana
+    depends_on:
+    - prometheus
 
 volumes:
   grafana-data:
