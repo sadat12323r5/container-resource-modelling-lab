@@ -48,12 +48,7 @@ type workerResult struct {
 // ------------------------------
 // Work-based CPU demand
 // ------------------------------
-//
-// IMPORTANT: a wall-clock "spin until deadline" loop is not a stable service
-// demand model. If the process is throttled/preempted, wall time moves anyway,
-// and your loop can exit having received *less* CPU than intended.
-//
-// So we calibrate a loop rate once (iters/ns), then for each request we execute
+// we calibrate a loop rate once (iters/ns), then for each request we execute
 // a fixed amount of work proportional to sampled demand.
 
 var sink uint64 // prevents compiler optimising the loop away
