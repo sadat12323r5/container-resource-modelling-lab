@@ -2,61 +2,139 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/csv"
+	"errors"
 	"log"
 	"math"
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
-type responseRecorder struct {
-	http.ResponseWriter
-	status int
-	bytes  int
-}
-
-func (rr *responseRecorder) WriteHeader(code int) {
-	rr.status = code
-	rr.ResponseWriter.WriteHeader(code)
-}
-
-func (rr *responseRecorder) Write(b []byte) (int, error) {
-	if rr.status == 0 {
-		rr.status = http.StatusOK
-	}
-	n, err := rr.ResponseWriter.Write(b)
-	rr.bytes += n
-	return n, err
-}
+// ------------------------------
+// Single-queue, single-worker HTTP server (FCFS)
+// ------------------------------
+//
+// Goals for modelling:
+//   - One FIFO queue, one worker => clean M/G/1 baseline.
+//   - Service demand is WORK-based (fixed CPU work) not TIME-based.
+//   - ResponseWriter writes happen in the handler goroutine (clean net/http usage).
+//   - Logging NEVER drops samples (missing tails ruins experiments).
+//   - Graceful shutdown flushes CSV on SIGTERM (docker stop/compose down).
 
 type job struct {
-	id      uint64
-	traceID string
-	arrival time.Time
-	rw      *responseRecorder
-	r       *http.Request
-	done    chan struct{}
+	id       uint64
+	traceID  string
+	arrival  time.Time
+	respChan chan workerResult
 }
 
-func burnCPU(d time.Duration) {
-	deadline := time.Now().Add(d)
-	x := uint64(0)
-	for time.Now().Before(deadline) {
+type workerResult struct {
+	serviceStart time.Time
+	serviceEnd   time.Time
+	status       int
+	body         []byte
+	headers      map[string]string
+}
+
+// ------------------------------
+// Work-based CPU demand
+// ------------------------------
+//
+// IMPORTANT: a wall-clock "spin until deadline" loop is not a stable service
+// demand model. If the process is throttled/preempted, wall time moves anyway,
+// and your loop can exit having received *less* CPU than intended.
+//
+// So we calibrate a loop rate once (iters/ns), then for each request we execute
+// a fixed amount of work proportional to sampled demand.
+
+var sink uint64 // prevents compiler optimising the loop away
+
+func busyLoop(iters uint64) {
+	x := sink ^ 0x9e3779b97f4a7c15
+	for i := uint64(0); i < iters; i++ {
 		x = x*1664525 + 1013904223
 	}
-	_ = x
+	sink = x
+}
+
+func calibrateItersPerNs() float64 {
+	calIters := uint64(getenvInt("CALIBRATE_ITERS", 20_000_000))
+	if calIters < 1_000_000 {
+		calIters = 1_000_000
+	}
+
+	// Warm-up reduces first-run jitter.
+	busyLoop(2_000_000)
+
+	start := time.Now()
+	busyLoop(calIters)
+	elapsed := time.Since(start)
+	if elapsed <= 0 {
+		return 1
+	}
+	return float64(calIters) / float64(elapsed.Nanoseconds())
+}
+
+func doWork(d time.Duration, itersPerNs float64) {
+	if d <= 0 {
+		return
+	}
+	target := uint64(float64(d.Nanoseconds()) * itersPerNs)
+	if target == 0 {
+		target = 1
+	}
+	busyLoop(target)
+}
+
+// ------------------------------
+// Logging helpers
+// ------------------------------
+
+func mustWriteHeader(csvWriter *csv.Writer, bufWriter *bufio.Writer) {
+	if err := csvWriter.Write([]string{
+		"id",
+		"trace_id",
+		"arrival_unix_ns",
+		"service_start_unix_ns",
+		"service_end_unix_ns",
+		"response_end_unix_ns",
+		"queue_ms",
+		"service_ms",
+		"response_ms",
+		"status_code",
+		"bytes_written",
+	}); err != nil {
+		log.Fatalf("write csv header: %v", err)
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		log.Fatalf("flush csv header: %v", err)
+	}
+	if err := bufWriter.Flush(); err != nil {
+		log.Fatalf("flush csv buffer: %v", err)
+	}
 }
 
 func main() {
+	// Make the system behaviour closer to "single worker".
 	runtime.GOMAXPROCS(1)
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
+	itersPerNs := calibrateItersPerNs()
+	log.Printf("calibration iters_per_ns=%.6f (CALIBRATE_ITERS=%d)", itersPerNs, getenvInt("CALIBRATE_ITERS", 20_000_000))
+
+	// ------------------------------
+	// CSV setup
+	// ------------------------------
 	csvPath := os.Getenv("CSV_LOG_PATH")
 	if csvPath == "" {
 		csvPath = "requests.csv"
@@ -84,53 +162,54 @@ func main() {
 			needHeader = false
 		}
 	}
+
 	bufWriter := bufio.NewWriterSize(csvFile, 1<<20)
 	csvWriter := csv.NewWriter(bufWriter)
 	if needHeader {
-		if err := csvWriter.Write([]string{
-			"id",
-			"trace_id",
-			"arrival_unix_ns",
-			"service_start_unix_ns",
-			"service_end_unix_ns",
-			"response_end_unix_ns",
-			"queue_ms",
-			"service_ms",
-			"response_ms",
-			"status_code",
-			"bytes_written",
-		}); err != nil {
-			log.Fatalf("write csv header: %v", err)
-		}
-		csvWriter.Flush()
-		if err := csvWriter.Error(); err != nil {
-			log.Fatalf("flush csv header: %v", err)
-		}
-		if err := bufWriter.Flush(); err != nil {
-			log.Fatalf("flush csv buffer: %v", err)
-		}
+		mustWriteHeader(csvWriter, bufWriter)
 	}
 
-	jobs := make(chan job, 1024)
-	var nextID uint64
-
-	serviceSampler := newServiceSampler()
-
+	// Async logger that NEVER drops (it will apply backpressure instead).
 	logQueueSize := getenvInt("CSV_LOG_QUEUE", 10000)
 	flushInterval := time.Duration(getenvInt("CSV_LOG_FLUSH_MS", 1000)) * time.Millisecond
 	logCh := make(chan []string, logQueueSize)
-	var dropped uint64
+	loggerDone := make(chan struct{})
 	go func() {
+		defer close(loggerDone)
 		ticker := time.NewTicker(flushInterval)
 		defer ticker.Stop()
 		pending := 0
 		for {
 			select {
-			case record := <-logCh:
+			case record, ok := <-logCh:
+				if !ok {
+					// final flush
+					if pending > 0 {
+						csvWriter.Flush()
+						if err := csvWriter.Error(); err != nil {
+							log.Printf("csv flush error: %v", err)
+						}
+						if err := bufWriter.Flush(); err != nil {
+							log.Printf("csv buffer flush error: %v", err)
+						}
+					}
+					return
+				}
 				if err := csvWriter.Write(record); err != nil {
 					log.Printf("csv write error: %v", err)
 				} else {
 					pending++
+				}
+				// occasional size-based flush reduces loss on crash
+				if pending >= 5000 {
+					csvWriter.Flush()
+					if err := csvWriter.Error(); err != nil {
+						log.Printf("csv flush error: %v", err)
+					}
+					if err := bufWriter.Flush(); err != nil {
+						log.Printf("csv buffer flush error: %v", err)
+					}
+					pending = 0
 				}
 			case <-ticker.C:
 				if pending > 0 {
@@ -143,57 +222,50 @@ func main() {
 					}
 					pending = 0
 				}
-				if droppedCount := atomic.SwapUint64(&dropped, 0); droppedCount > 0 {
-					log.Printf("csv logger dropped %d records (queue full)", droppedCount)
-				}
 			}
 		}
 	}()
 
+	// ------------------------------
+	// Work queue + worker
+	// ------------------------------
+	jobs := make(chan job, getenvInt("JOB_QUEUE", 1024))
+	serviceSampler := newServiceSampler()
+	workerDone := make(chan struct{})
 	go func() {
+		defer close(workerDone)
 		for j := range jobs {
 			serviceStart := time.Now()
-			// Controlled service demand (tune this later)
-			burnCPU(serviceSampler())
+			demand := serviceSampler()
+			doWork(demand, itersPerNs)
 			serviceEnd := time.Now()
 
-			j.rw.Header().Set("X-Request-Id", j.traceID)
-			j.rw.WriteHeader(http.StatusOK)
-			_, _ = j.rw.Write([]byte("ok\n"))
-			responseEnd := time.Now()
-
-			queueMs := serviceStart.Sub(j.arrival).Seconds() * 1000
-			serviceMs := serviceEnd.Sub(serviceStart).Seconds() * 1000
-			responseMs := responseEnd.Sub(j.arrival).Seconds() * 1000
-			status := j.rw.status
-			if status == 0 {
-				status = http.StatusOK
+			j.respChan <- workerResult{
+				serviceStart: serviceStart,
+				serviceEnd:   serviceEnd,
+				status:       http.StatusOK,
+				body:         []byte("ok\n"),
+				headers:      map[string]string{"X-Request-Id": j.traceID},
 			}
-			record := []string{
-				strconv.FormatUint(j.id, 10),
-				j.traceID,
-				strconv.FormatInt(j.arrival.UnixNano(), 10),
-				strconv.FormatInt(serviceStart.UnixNano(), 10),
-				strconv.FormatInt(serviceEnd.UnixNano(), 10),
-				strconv.FormatInt(responseEnd.UnixNano(), 10),
-				strconv.FormatFloat(queueMs, 'f', 3, 64),
-				strconv.FormatFloat(serviceMs, 'f', 3, 64),
-				strconv.FormatFloat(responseMs, 'f', 3, 64),
-				strconv.Itoa(status),
-				strconv.Itoa(j.rw.bytes),
-			}
-			select {
-			case logCh <- record:
-			default:
-				atomic.AddUint64(&dropped, 1)
-			}
-			close(j.done)
+			close(j.respChan)
 		}
 	}()
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		d := make(chan struct{})
-		id := atomic.AddUint64(&nextID, 1)
+
+	// ------------------------------
+	// HTTP handlers
+	// ------------------------------
+	var nextID uint64
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		arrival := time.Now()
+		id := atomic.AddUint64(&nextID, 1)
+
 		traceID := r.Header.Get("X-Request-Id")
 		if traceID == "" {
 			traceID = r.Header.Get("X-Vegeta-Seq")
@@ -201,11 +273,96 @@ func main() {
 		if traceID == "" {
 			traceID = strconv.FormatUint(id, 10)
 		}
-		rw := &responseRecorder{ResponseWriter: w}
-		jobs <- job{id: id, traceID: traceID, arrival: arrival, rw: rw, r: r, done: d}
-		<-d
+
+		respChan := make(chan workerResult, 1)
+		j := job{id: id, traceID: traceID, arrival: arrival, respChan: respChan}
+
+		// Fail fast if the queue is full.
+		select {
+		case jobs <- j:
+			// queued
+		default:
+			w.Header().Set("X-Request-Id", traceID)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("queue full\n"))
+			return
+		}
+
+		res, ok := <-respChan
+		if !ok {
+			w.Header().Set("X-Request-Id", traceID)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("worker error\n"))
+			return
+		}
+
+		for k, v := range res.headers {
+			w.Header().Set(k, v)
+		}
+		w.WriteHeader(res.status)
+		bytesWritten, _ := w.Write(res.body)
+		responseEnd := time.Now()
+
+		queueMs := res.serviceStart.Sub(arrival).Seconds() * 1000
+		serviceMs := res.serviceEnd.Sub(res.serviceStart).Seconds() * 1000
+		responseMs := responseEnd.Sub(arrival).Seconds() * 1000
+
+		record := []string{
+			strconv.FormatUint(id, 10),
+			traceID,
+			strconv.FormatInt(arrival.UnixNano(), 10),
+			strconv.FormatInt(res.serviceStart.UnixNano(), 10),
+			strconv.FormatInt(res.serviceEnd.UnixNano(), 10),
+			strconv.FormatInt(responseEnd.UnixNano(), 10),
+			strconv.FormatFloat(queueMs, 'f', 3, 64),
+			strconv.FormatFloat(serviceMs, 'f', 3, 64),
+			strconv.FormatFloat(responseMs, 'f', 3, 64),
+			strconv.Itoa(res.status),
+			strconv.Itoa(bytesWritten),
+		}
+
+		// For modelling: do NOT drop logs. If the logger can't keep up,
+		// backpressure is the correct failure mode.
+		logCh <- record
 	})
-	log.Fatal(http.ListenAndServe(":8080", nil))
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	// ------------------------------
+	// Graceful shutdown
+	// ------------------------------
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		log.Printf("shutdown signal received; draining...")
+		cancel()
+		// Close server first so we stop accepting new work.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = server.Shutdown(shutdownCtx)
+		// Drain worker + logger.
+		close(jobs)
+		<-workerDone
+		close(logCh)
+		<-loggerDone
+		log.Printf("shutdown complete")
+	}()
+
+	log.Printf("listening on %s", server.Addr)
+	err = server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("listen: %v", err)
+	}
+
+	// If we exited normally (server closed), wait for shutdown to finish.
+	<-ctx.Done()
 }
 
 func getenvInt(name string, fallback int) int {

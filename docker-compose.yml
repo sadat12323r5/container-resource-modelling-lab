@@ -6,15 +6,31 @@ services:
     cpuset: "0"
     cpus: "1.0"
     mem_limit: "256m"
+    stop_grace_period: 10s
     environment:
+      # CSV logging
       - CSV_LOG_PATH=/app/logs/requests.csv
       - CSV_LOG_APPEND=true
+      - CSV_LOG_QUEUE=20000
+      - CSV_LOG_FLUSH_MS=1000
+
+      # One FIFO queue feeding one worker
+      - JOB_QUEUE=1024
+
+      # Service-demand model (sampled per request, in microseconds)
+      - SERVICE_DIST=lognormal
+      - SERVICE_MEAN_US=200
+      - SERVICE_LOGN_SIGMA=0.5
+
+      # Work calibration stability (bigger = steadier, slower startup)
+      - CALIBRATE_ITERS=20000000
     volumes:
       - ./logs:/app/logs
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
-    ports: ["8081:8080"]
+    ports:
+      - "8081:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -23,21 +39,24 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    ports: ["9090:9090"]
+    ports:
+      - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
-    - cadvisor
+      - cadvisor
 
   grafana:
     image: grafana/grafana-oss:latest
-    ports: ["3000:3000"]
+    ports:
+      - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-data:/var/lib/grafana
     depends_on:
-    - prometheus
+      - prometheus
 
 volumes:
   grafana-data:
+
