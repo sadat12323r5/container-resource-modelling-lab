@@ -6,6 +6,11 @@ services:
     cpuset: "0"
     cpus: "1.0"
     mem_limit: "256m"
+    environment:
+      - CSV_LOG_PATH=/app/logs/requests.csv
+      - CSV_LOG_APPEND=true
+    volumes:
+      - ./logs:/app/logs
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
