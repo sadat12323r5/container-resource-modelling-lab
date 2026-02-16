@@ -1,7 +1,7 @@
-Capacity Lab
+Docker Container Modelling
 ============
-Single-core, single-thread queueing testbed for validating trace-driven DES
-and capacity planning models under controlled load.
+Currently working on Single-core, single-thread queueing testbed for validating trace-driven DES
+and capacity planning models under controlled load. All found in server_single.
 
 Overview
 --------
