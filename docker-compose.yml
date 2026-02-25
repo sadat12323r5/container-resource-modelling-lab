@@ -25,7 +25,7 @@ services:
       # Work calibration stability (bigger = steadier, slower startup)
       - CALIBRATE_ITERS=20000000
     volumes:
-      - ./logs:/app/logs
+      - "./logs and des:/app/logs"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest

@@ -54,7 +54,9 @@ type workerResult struct {
 var sink uint64 // prevents compiler optimising the loop away
 
 func busyLoop(iters uint64) {
+	//seed derived from golden ratio scaled to 64 bits for spreading bits nicely
 	x := sink ^ 0x9e3779b97f4a7c15
+	//LCG loop
 	for i := uint64(0); i < iters; i++ {
 		x = x*1664525 + 1013904223
 	}

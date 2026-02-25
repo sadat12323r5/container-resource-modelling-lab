@@ -17,9 +17,10 @@ Repository Layout
   - main.go: single-threaded HTTP service + CSV logging
   - Dockerfile: container build for the service
 - docker-compose.yml: app + metrics stack
-- logs/
+- logs and des/
   - requests.csv: CSV logs (bind-mounted from container)
   - plot_metrics.py: plotting helper
+  - single_server_des.py: single-server DES and comparison script
 - poisson_load.py: Poisson arrival load generator (host)
 
 Quick Start (Docker)
@@ -42,7 +43,7 @@ $TARGET = "http://host.docker.internal:8080/"
 
 CSV Logs
 --------
-Logs are written to `./logs/requests.csv` (bind-mounted):
+Logs are written to `./logs and des/requests.csv` (bind-mounted):
 
 CSV columns:
 ```
@@ -82,15 +83,28 @@ environment:
 
 Plotting
 --------
-Plot histograms and CDFs from `logs/requests.csv`:
+Plot histograms and CDFs from `requests.csv` in `logs and des/`:
 ```powershell
-python .\logs\plot_metrics.py
+python ".\logs and des\plot_metrics.py"
 ```
 
 Optional flags:
 ```powershell
-python .\logs\plot_metrics.py --all
-python .\logs\plot_metrics.py --logy
+python ".\logs and des\plot_metrics.py" --all
+python ".\logs and des\plot_metrics.py" --logy
+python ".\logs and des\plot_metrics.py" --csv requests_2rps.csv --metric response_ms
+```
+
+DES (Single Server FCFS)
+------------------------
+Run DES against a trace:
+```powershell
+python ".\logs and des\single_server_des.py" --input ".\logs and des\requests_2rps.csv" --output ".\logs and des\des_simulated_2rps_replay.csv" --mode replay
+```
+
+Bootstrap service-time sampling:
+```powershell
+python ".\logs and des\single_server_des.py" --input ".\logs and des\requests_2rps.csv" --output ".\logs and des\des_simulated_2rps.csv" --mode bootstrap --seed 42
 ```
 
 Dependencies:

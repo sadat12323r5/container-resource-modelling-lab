@@ -5,7 +5,12 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot histogram and CDF from logs/requests.csv"
+        description="Plot histogram and CDF from requests CSV in this folder"
+    )
+    parser.add_argument(
+        "--csv",
+        default="requests.csv",
+        help="CSV file name in this folder (default: requests.csv)",
     )
     parser.add_argument(
         "--metric",
@@ -90,18 +95,56 @@ def plot_metric(df, metric, out_dir, bins, logy, plt):
     print(f"Saved: {hist_path.name}, {cdf_path.name}")
 
 
+def print_variability_summary(df):
+    required = {"arrival_unix_ns", "service_ms"}
+    if not required.issubset(df.columns):
+        missing = ", ".join(sorted(required - set(df.columns)))
+        print(f"Variability summary skipped: missing column(s): {missing}")
+        return
+
+    service = df["service_ms"].dropna()
+    if service.empty:
+        print("Variability summary skipped: service_ms has no data.")
+        return
+
+    arrivals = df["arrival_unix_ns"].dropna().sort_values()
+    if len(arrivals) < 2:
+        print("Variability summary skipped: need at least 2 arrivals.")
+        return
+
+    interarrival_ms = arrivals.diff().dropna() / 1_000_000.0
+
+    service_mean = float(service.mean())
+    service_std = float(service.std(ddof=0))
+    service_cv = service_std / service_mean if service_mean > 0 else float("nan")
+
+    ia_mean = float(interarrival_ms.mean())
+    ia_std = float(interarrival_ms.std(ddof=0))
+    ia_cv = ia_std / ia_mean if ia_mean > 0 else float("nan")
+
+    print("Variability summary")
+    print(
+        f"service_ms: mean={service_mean:.6f}, std={service_std:.6f}, cv={service_cv:.6f}"
+    )
+    print(
+        f"interarrival_ms: mean={ia_mean:.6f}, std={ia_std:.6f}, cv={ia_cv:.6f}"
+    )
+
+
 def main() -> int:
     args = parse_args()
     pd, plt = require_deps()
 
     script_dir = Path(__file__).resolve().parent
-    csv_path = script_dir / "requests.csv"
+    csv_path = script_dir / args.csv
     if not csv_path.exists():
         print(f"CSV not found: {csv_path}", file=sys.stderr)
         return 1
 
     df = pd.read_csv(csv_path)
     out_dir = script_dir
+
+    print_variability_summary(df)
 
     if args.all:
         for metric in ("queue_ms", "service_ms", "response_ms"):
