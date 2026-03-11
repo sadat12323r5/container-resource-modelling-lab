@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capacity Lab Chat Console</title>
+    <link rel="stylesheet" href="/chat.css">
+</head>
+<body>
+    <div class="page-shell">
+        <main class="app-shell">
+            <section class="hero-card">
+                <p class="eyebrow">Capacity Lab</p>
+                <h1>Messaging Backend Console</h1>
+                <p class="hero-copy">
+                    This browser client talks directly to the Apache messaging backend.
+                    It supports room-based send and receive flows with polling so you can
+                    test the service without crafting requests by hand.
+                </p>
+                <div class="hero-metrics">
+                    <div>
+                        <span class="metric-label">Backend</span>
+                        <strong id="healthBadge">Checking...</strong>
+                    </div>
+                    <div>
+                        <span class="metric-label">Room</span>
+                        <strong id="activeRoomLabel">general</strong>
+                    </div>
+                    <div>
+                        <span class="metric-label">Last Service</span>
+                        <strong id="serviceLabel">n/a</strong>
+                    </div>
+                </div>
+            </section>
+
+            <section class="workspace">
+                <aside class="panel controls-panel">
+                    <div class="panel-header">
+                        <h2>Session</h2>
+                        <p>Change room or user without leaving the page.</p>
+                    </div>
+
+                    <label class="field">
+                        <span>Room</span>
+                        <input id="roomInput" type="text" value="general" maxlength="64">
+                    </label>
+
+                    <label class="field">
+                        <span>User</span>
+                        <input id="userInput" type="text" value="alice" maxlength="64">
+                    </label>
+
+                    <label class="field">
+                        <span>Polling Interval</span>
+                        <select id="pollInput">
+                            <option value="1000">1 second</option>
+                            <option value="2000" selected>2 seconds</option>
+                            <option value="5000">5 seconds</option>
+                        </select>
+                    </label>
+
+                    <div class="button-row">
+                        <button id="connectButton" class="button-primary" type="button">Connect</button>
+                        <button id="reloadButton" class="button-secondary" type="button">Reload</button>
+                    </div>
+
+                    <div class="session-notes">
+                        <p id="statusText">Waiting for connection.</p>
+                        <p class="subtle">Receiving is implemented by polling <code>/messages</code>. Sending uses <code>/send</code>.</p>
+                    </div>
+                </aside>
+
+                <section class="panel feed-panel">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Messages</h2>
+                            <p id="messageCount">No messages loaded yet.</p>
+                        </div>
+                        <span id="pollLabel" class="pill">Polling every 2s</span>
+                    </div>
+
+                    <div id="messages" class="message-list" aria-live="polite"></div>
+
+                    <form id="composerForm" class="composer">
+                        <label class="field composer-field">
+                            <span>Message</span>
+                            <textarea id="messageInput" rows="3" maxlength="1024" placeholder="Write a message to the current room"></textarea>
+                        </label>
+                        <div class="composer-actions">
+                            <span class="subtle">POST <code>/send</code></span>
+                            <button id="sendButton" class="button-primary" type="submit">Send</button>
+                        </div>
+                    </form>
+                </section>
+            </section>
+        </main>
+    </div>
+
+    <script src="/chat.js"></script>
+</body>
+</html>

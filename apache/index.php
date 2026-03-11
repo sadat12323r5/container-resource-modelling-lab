@@ -63,6 +63,18 @@ function send_json(int $status, array $payload): void {
     echo json_encode($payload) . "\n";
 }
 
+function send_html_file(string $path): void {
+    if (!file_exists($path)) {
+        http_response_code(500);
+        header('Content-Type: text/plain; charset=UTF-8');
+        echo "missing frontend asset\n";
+        return;
+    }
+    http_response_code(200);
+    header('Content-Type: text/html; charset=UTF-8');
+    readfile($path);
+}
+
 function append_message(string $path, array $msg): void {
     $dir = dirname($path);
     if (!is_dir($dir)) {
@@ -157,6 +169,11 @@ $query = $_GET;
 
 header('X-Service-Target-Us: ' . number_format($serviceUs, 3, '.', ''));
 header('X-Service-Actual-Ms: ' . number_format($actualServiceMs, 3, '.', ''));
+
+if (($path === '/' || $path === '/index.html') && $method === 'GET') {
+    send_html_file(__DIR__ . '/chat.html');
+    exit;
+}
 
 if ($path === '/health') {
     send_json(200, ['ok' => true]);
