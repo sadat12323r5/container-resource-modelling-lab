@@ -6,6 +6,7 @@ and capacity planning models under controlled load. All found in server_single.
 Overview
 --------
 - Go HTTP service with a single worker (FCFS FIFO).
+- Optional real Apache service (php-apache) with configurable service-time distribution.
 - Docker constraints to approximate a single core.
 - CSV logging of arrival/start/end times and queue/service/response latencies.
 - Load generation via Vegeta or a Poisson (open-loop) generator.
@@ -16,12 +17,14 @@ Repository Layout
 - server_single/
   - main.go: single-threaded HTTP service + CSV logging
   - Dockerfile: container build for the service
-- docker-compose.yml: app + metrics stack
+- docker-compose.yml: app + optional apache + metrics stack
+- apache/
+  - index.php: Apache-served messaging endpoints with configurable synthetic service demand
 - logs and des/
   - requests.csv: CSV logs (bind-mounted from container)
   - plot_metrics.py: plotting helper
   - single_server_des.py: single-server DES and comparison script
-- poisson_load.py: Poisson arrival load generator (host)
+- poisson_load_generator.py: Poisson arrival load generator (host, GET requests)
 
 Quick Start (Docker)
 --------------------
@@ -30,12 +33,17 @@ Quick Start (Docker)
 docker compose up --build
 ```
 
-2) Generate Poisson arrivals (open-loop):
+2) Generate Poisson arrivals (open-loop) against the Go app:
 ```powershell
-python .\poisson_load.py --url http://host.docker.internal:8080/ --rate 200 --duration 60
+python .\poisson_load_generator.py --url http://localhost:8080/ --rate 200 --duration 60
 ```
 
-3) Or use Vegeta (Dockerized):
+3) Generate open-loop read traffic against the Apache messaging variant:
+```powershell
+python .\poisson_load_generator.py --url "http://localhost:8082/messages?room=general&since_id=0&limit=50" --rate 200 --duration 60
+```
+
+4) Or use Vegeta (Dockerized) for the Go app:
 ```powershell
 $TARGET = "http://host.docker.internal:8080/"
 "GET $TARGET" | docker run --rm -i peterevans/vegeta sh -c "vegeta attack -duration=60s -rate=800 | vegeta report"
@@ -80,6 +88,161 @@ environment:
   - SERVICE_MEAN_US=200
   - SERVICE_LOGN_SIGMA=1.0
 ```
+Apache Service Variant
+----------------------
+A real Apache service is available at `http://localhost:8082/` via `php:8.3-apache`.
+It now behaves like a minimal messaging backend with three routes:
+
+- `GET /health`
+- `POST /send` with JSON body: `{"room":"general","user":"alice","text":"hello"}`
+- `GET /messages?room=general&since_id=0&limit=50`
+
+Message persistence is append-only JSONL on container filesystem (default `/tmp/apache_messages.jsonl`).
+
+Service-time and app controls:
+- APACHE_SERVICE_DIST=fixed|exponential|lognormal|uniform
+- APACHE_SERVICE_MEAN_US=200
+- APACHE_SERVICE_LOGN_SIGMA=0.5
+- APACHE_SERVICE_MIN_US / APACHE_SERVICE_MAX_US (uniform)
+- APACHE_MESSAGES_FILE=/tmp/apache_messages.jsonl
+- APACHE_MAX_TEXT_BYTES=1024
+
+Response headers include:
+- `X-Service-Target-Us`: sampled target demand
+- `X-Service-Actual-Ms`: measured in-handler service time
+
+Example requests:
+```powershell
+curl.exe -X POST http://localhost:8082/send -H "Content-Type: application/json" -d "{\"room\":\"general\",\"user\":\"alice\",\"text\":\"hello\"}"
+curl.exe "http://localhost:8082/messages?room=general&since_id=0&limit=50"
+```
+
+Testing the Messaging Backend
+-----------------------------
+Use the `apache` service when you want the messaging-style backend rather than the Go FIFO app.
+
+1) Start only the messaging backend:
+```powershell
+docker compose up -d apache
+docker compose ps apache
+```
+
+2) Optionally watch logs while testing:
+```powershell
+docker compose logs -f apache
+```
+
+3) Smoke test the health route:
+```powershell
+Invoke-RestMethod http://localhost:8082/health
+```
+
+Expected result:
+- `ok = True`
+
+4) Send a message:
+```powershell
+$body = @{ room = "general"; user = "alice"; text = "hello" } | ConvertTo-Json -Compress
+Invoke-RestMethod -Method Post -Uri http://localhost:8082/send -ContentType "application/json" -Body $body
+```
+
+Expected result:
+- `ok = true`
+- A `message` object containing `id`, `room`, `user`, `text`, and `ts_unix_ns`
+
+5) Fetch messages from a room:
+```powershell
+Invoke-RestMethod "http://localhost:8082/messages?room=general&since_id=0&limit=50"
+```
+
+Expected result:
+- `count` should be at least `1`
+- The returned `messages` array should include the message you just posted
+
+6) Inspect raw response headers if you want to record synthetic service timing:
+```powershell
+curl.exe -i http://localhost:8082/health
+```
+
+Relevant headers:
+- `X-Service-Target-Us`
+- `X-Service-Actual-Ms`
+
+7) Negative tests:
+```powershell
+curl.exe -i -X POST http://localhost:8082/send -H "Content-Type: application/json" -d "{\"room\":\"general\",\"user\":\"alice\",\"text\":\"\"}"
+curl.exe -i -X POST http://localhost:8082/send -H "Content-Type: application/json" -d "{bad json}"
+```
+
+Expected result:
+- Empty `text` returns `400` with `text_required`
+- Invalid JSON returns `400` with `invalid_json`
+
+Load Testing the Messaging Backend
+----------------------------------
+The included `poisson_load_generator.py` only sends `GET` requests, so it is suitable for `GET /messages` or `GET /health`, but not `POST /send`.
+
+Read-path load test:
+```powershell
+python .\poisson_load_generator.py --url "http://localhost:8082/messages?room=general&since_id=0&limit=50" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_read_load_200rps.txt"
+```
+
+Health-route load test:
+```powershell
+python .\poisson_load_generator.py --url "http://localhost:8082/health" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_health_load_200rps.txt"
+```
+
+Simple write burst for the send path:
+```powershell
+1..100 | ForEach-Object {
+  $body = @{ room = "general"; user = "load"; text = "message $_" } | ConvertTo-Json -Compress
+  Invoke-RestMethod -Method Post -Uri http://localhost:8082/send -ContentType "application/json" -Body $body | Out-Null
+}
+```
+
+Notes:
+- The write burst above is useful for quickly exercising `POST /send`, but it is not a controlled open-loop load generator.
+- If you need controlled POST load, use a tool that supports request bodies such as Vegeta, k6, or Locust.
+
+Recording Results
+-----------------
+For the Apache messaging backend, record results with client-side output, HTTP headers, container logs, and the metrics stack.
+
+Save a single request's timing headers:
+```powershell
+curl.exe -D ".\logs and des\apache_health_headers.txt" -o NUL http://localhost:8082/health
+```
+
+Save a message snapshot:
+```powershell
+Invoke-RestMethod "http://localhost:8082/messages?room=general&since_id=0&limit=50" | ConvertTo-Json -Depth 6 | Out-File ".\logs and des\apache_messages_snapshot.json"
+```
+
+Save Apache container logs:
+```powershell
+docker compose logs apache | Out-File ".\logs and des\apache_docker.log"
+```
+
+Save load-generator summaries:
+```powershell
+python .\poisson_load_generator.py --url "http://localhost:8082/health" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_health_load_200rps.txt"
+```
+
+Optional metrics stack for container-level CPU and memory:
+```powershell
+docker compose up -d apache cadvisor prometheus grafana
+```
+
+Endpoints:
+- cAdvisor: `http://localhost:8081`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000` (default password: `admin`)
+
+Important:
+- The Go app writes request-level traces to `./logs and des/requests.csv`.
+- The Apache messaging backend does **not** currently write request-level CSV traces, so `requests.csv` will not contain Apache route timings unless you add separate logging for that service.
+- Messages are stored in the Apache container at `/tmp/apache_messages.jsonl`. Recreating the container resets that message store.
+
 
 Plotting
 --------

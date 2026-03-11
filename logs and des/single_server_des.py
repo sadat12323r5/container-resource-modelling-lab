@@ -130,12 +130,10 @@ def simulate(arrivals_ns, observed_service_ms, mode, seed):
             observed_service_ms[rng.randrange(len(observed_service_ms))]
             for _ in observed_service_ms
         ]
-
     sim_queue_ms = []
     sim_response_ms = []
     sim_service_start_ns = []
     sim_service_end_ns = []
-
     prev_end_ns = arrivals_ns[0]
     for arrival_ns, svc_ms in zip(arrivals_ns, sampled_service_ms):
         service_ns = int(round(svc_ms * 1_000_000.0))
@@ -190,13 +188,11 @@ def main():
     args = parse_args()
     input_path = Path(args.input)
     output_path = Path(args.output)
-
     if not input_path.exists():
         raise SystemExit(f"Input CSV not found: {input_path}")
 
     rows = load_trace(input_path)
     arrivals_ns, obs_service_ms, obs_queue_ms, obs_response_ms = prepare_observed(rows)
-
     sim_data = simulate(arrivals_ns, obs_service_ms, args.mode, args.seed)
 
     obs_resp_summary = summarize("observed_response_ms", obs_response_ms)
@@ -205,7 +201,6 @@ def main():
     sim_q_summary = summarize("sim_queue_ms", sim_data["sim_queue_ms"])
     obs_s_summary = summarize("observed_service_ms", obs_service_ms)
     sim_s_summary = summarize("sim_service_ms", sim_data["sampled_service_ms"])
-
     print(f"input={input_path} mode={args.mode} seed={args.seed}")
     print_summary("observed_response_ms", obs_resp_summary)
     print_summary("sim_response_ms", sim_resp_summary)
@@ -213,12 +208,10 @@ def main():
     print_summary("sim_queue_ms", sim_q_summary)
     print_summary("observed_service_ms", obs_s_summary)
     print_summary("sim_service_ms", sim_s_summary)
-
     ks_resp = ks_like_distance(obs_response_ms, sim_data["sim_response_ms"])
     ks_queue = ks_like_distance(obs_queue_ms, sim_data["sim_queue_ms"])
     print(f"ks_like_response={ks_resp:.6f}")
     print(f"ks_like_queue={ks_queue:.6f}")
-
     write_sim_csv(output_path, arrivals_ns, sim_data)
     print(f"wrote_simulated_csv={output_path}")
 
