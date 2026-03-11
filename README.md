@@ -6,6 +6,7 @@ and capacity planning models under controlled load. All found in server_single.
 Overview
 --------
 - Go HTTP service with a single worker (FCFS FIFO).
+- Optional real Apache service (php-apache) with configurable service-time distribution.
 - Docker constraints to approximate a single core.
 - CSV logging of arrival/start/end times and queue/service/response latencies.
 - Load generation via Vegeta or a Poisson (open-loop) generator.
@@ -16,7 +17,9 @@ Repository Layout
 - server_single/
   - main.go: single-threaded HTTP service + CSV logging
   - Dockerfile: container build for the service
-- docker-compose.yml: app + metrics stack
+- docker-compose.yml: app + optional apache + metrics stack
+- apache/
+  - index.php: Apache-served messaging endpoints with configurable synthetic service demand
 - logs and des/
   - requests.csv: CSV logs (bind-mounted from container)
   - plot_metrics.py: plotting helper
@@ -33,6 +36,8 @@ docker compose up --build
 2) Generate Poisson arrivals (open-loop):
 ```powershell
 python .\poisson_load.py --url http://host.docker.internal:8080/ --rate 200 --duration 60
+# apache variant
+python .\poisson_load.py --url http://host.docker.internal:8082/ --rate 200 --duration 60
 ```
 
 3) Or use Vegeta (Dockerized):
@@ -80,6 +85,35 @@ environment:
   - SERVICE_MEAN_US=200
   - SERVICE_LOGN_SIGMA=1.0
 ```
+Apache Service Variant
+----------------------
+A real Apache service is available at `http://localhost:8082/` via `php:8.3-apache`.
+It now behaves like a minimal messaging backend with three routes:
+
+- `GET /health`
+- `POST /send` with JSON body: `{"room":"general","user":"alice","text":"hello"}`
+- `GET /messages?room=general&since_id=0&limit=50`
+
+Message persistence is append-only JSONL on container filesystem (default `/tmp/apache_messages.jsonl`).
+
+Service-time and app controls:
+- APACHE_SERVICE_DIST=fixed|exponential|lognormal|uniform
+- APACHE_SERVICE_MEAN_US=200
+- APACHE_SERVICE_LOGN_SIGMA=0.5
+- APACHE_SERVICE_MIN_US / APACHE_SERVICE_MAX_US (uniform)
+- APACHE_MESSAGES_FILE=/tmp/apache_messages.jsonl
+- APACHE_MAX_TEXT_BYTES=1024
+
+Response headers include:
+- `X-Service-Target-Us`: sampled target demand
+- `X-Service-Actual-Ms`: measured in-handler service time
+
+Example requests:
+```powershell
+curl -X POST http://localhost:8082/send -H "Content-Type: application/json" -d '{"room":"general","user":"alice","text":"hello"}'
+curl "http://localhost:8082/messages?room=general&since_id=0&limit=50"
+```
+
 
 Plotting
 --------

@@ -27,6 +27,24 @@ services:
     volumes:
       - "./logs and des:/app/logs"
 
+
+  apache:
+    image: php:8.3-apache
+    ports:
+      - "8082:80"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "256m"
+    stop_grace_period: 10s
+    environment:
+      - APACHE_SERVICE_DIST=lognormal
+      - APACHE_SERVICE_MEAN_US=200
+      - APACHE_SERVICE_LOGN_SIGMA=0.5
+      - APACHE_MESSAGES_FILE=/tmp/apache_messages.jsonl
+      - APACHE_MAX_TEXT_BYTES=1024
+    volumes:
+      - ./apache:/var/www/html:ro
+
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     ports:
