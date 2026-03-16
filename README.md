@@ -1,4 +1,9 @@
 Docker Container Modelling
+to do for now:
+-> one client(rate controlled message sending for controlling queueing), one server(random text with random length).  
+-> 
+-> 
+
 ============
 Currently working on Single-core, single-thread queueing testbed for validating trace-driven DES
 and capacity planning models under controlled load. All found in server_single.
@@ -61,7 +66,19 @@ Repository Layout
 - docker-compose.yml: app + optional apache + metrics stack
 - apache/
   - index.php: Apache-served messaging endpoints with configurable synthetic service demand
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
   - chat.html / chat.css / chat.js: browser UI for room-based message send/receive testing
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 - logs and des/
   - requests.csv: CSV logs from the Go app (bind-mounted from container)
   - plot_metrics.py: histogram/CDF plotting helper for trace CSVs
@@ -84,7 +101,22 @@ python .\poisson_load_generator.py --url http://localhost:8080/ --rate 200 --dur
 
 3) Generate open-loop read traffic against the Apache messaging variant:
 ```powershell
+<<<<<<< ours
 python .\poisson_load_generator.py --url "http://localhost:8082/messages?room=general&since_id=0&limit=50" --rate 200 --duration 60
+=======
+python .\poisson_load.py --url http://host.docker.internal:8080/ --rate 200 --duration 60
+# apache variant
+python .\poisson_load.py --url http://host.docker.internal:8082/ --rate 200 --duration 60
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 ```
 
 4) Or use Vegeta (Dockerized) for the Go app:
@@ -135,15 +167,48 @@ environment:
 Apache Service Variant
 ----------------------
 A real Apache service is available at `http://localhost:8082/` via `php:8.3-apache`.
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 It now behaves like a minimal messaging backend with a small browser client at `/` and three API routes:
 
 - `GET /` serves a chat-style test UI
+=======
+It now behaves like a minimal messaging backend with three routes:
+
+>>>>>>> theirs
+=======
+It now behaves like a minimal messaging backend with three routes:
+
+>>>>>>> theirs
+=======
+It now behaves like a minimal messaging backend with three routes:
+
+>>>>>>> theirs
+=======
+It now behaves like a minimal messaging backend with three routes:
+
+>>>>>>> theirs
 - `GET /health`
 - `POST /send` with JSON body: `{"room":"general","user":"alice","text":"hello"}`
 - `GET /messages?room=general&since_id=0&limit=50`
 
 Message persistence is append-only JSONL on container filesystem (default `/tmp/apache_messages.jsonl`).
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 The browser client receives messages by polling `GET /messages`; this is sufficient for interactive testing, but it is not a websocket-based real-time transport.
+In the current stock Apache setup, the browser client calls these routes through `index.php?route=...` so it does not depend on URL rewrite rules.
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
 Service-time and app controls:
 - APACHE_SERVICE_DIST=fixed|exponential|lognormal|uniform
@@ -159,8 +224,12 @@ Response headers include:
 
 Example requests:
 ```powershell
-curl.exe -X POST http://localhost:8082/send -H "Content-Type: application/json" -d "{\"room\":\"general\",\"user\":\"alice\",\"text\":\"hello\"}"
-curl.exe "http://localhost:8082/messages?room=general&since_id=0&limit=50"
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+curl.exe -X POST "http://localhost:8082/index.php?route=/send" -H "Content-Type: application/json" -d "{\"room\":\"general\",\"user\":\"alice\",\"text\":\"hello\"}"
+curl.exe "http://localhost:8082/index.php?route=/messages&room=general&since_id=0&limit=50"
 ```
 
 Testing the Messaging Backend
@@ -191,7 +260,7 @@ docker compose logs -f apache
 
 4) Smoke test the health route:
 ```powershell
-Invoke-RestMethod http://localhost:8082/health
+Invoke-RestMethod "http://localhost:8082/index.php?route=/health"
 ```
 
 Expected result:
@@ -200,7 +269,7 @@ Expected result:
 5) Send a message:
 ```powershell
 $body = @{ room = "general"; user = "alice"; text = "hello" } | ConvertTo-Json -Compress
-Invoke-RestMethod -Method Post -Uri http://localhost:8082/send -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8082/index.php?route=/send" -ContentType "application/json" -Body $body
 ```
 
 Expected result:
@@ -209,7 +278,7 @@ Expected result:
 
 6) Fetch messages from a room:
 ```powershell
-Invoke-RestMethod "http://localhost:8082/messages?room=general&since_id=0&limit=50"
+Invoke-RestMethod "http://localhost:8082/index.php?route=/messages&room=general&since_id=0&limit=50"
 ```
 
 Expected result:
@@ -218,7 +287,7 @@ Expected result:
 
 7) Inspect raw response headers if you want to record synthetic service timing:
 ```powershell
-curl.exe -i http://localhost:8082/health
+curl.exe -i "http://localhost:8082/index.php?route=/health"
 ```
 
 Relevant headers:
@@ -227,8 +296,8 @@ Relevant headers:
 
 8) Negative tests:
 ```powershell
-curl.exe -i -X POST http://localhost:8082/send -H "Content-Type: application/json" -d "{\"room\":\"general\",\"user\":\"alice\",\"text\":\"\"}"
-curl.exe -i -X POST http://localhost:8082/send -H "Content-Type: application/json" -d "{bad json}"
+curl.exe -i -X POST "http://localhost:8082/index.php?route=/send" -H "Content-Type: application/json" -d "{\"room\":\"general\",\"user\":\"alice\",\"text\":\"\"}"
+curl.exe -i -X POST "http://localhost:8082/index.php?route=/send" -H "Content-Type: application/json" -d "{bad json}"
 ```
 
 Expected result:
@@ -243,19 +312,19 @@ For interactive manual testing, open the frontend at `http://localhost:8082/` in
 
 Read-path load test:
 ```powershell
-python .\poisson_load_generator.py --url "http://localhost:8082/messages?room=general&since_id=0&limit=50" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_read_load_200rps.txt"
+python .\poisson_load_generator.py --url "http://localhost:8082/index.php?route=/messages&room=general&since_id=0&limit=50" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_read_load_200rps.txt"
 ```
 
 Health-route load test:
 ```powershell
-python .\poisson_load_generator.py --url "http://localhost:8082/health" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_health_load_200rps.txt"
+python .\poisson_load_generator.py --url "http://localhost:8082/index.php?route=/health" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_health_load_200rps.txt"
 ```
 
 Simple write burst for the send path:
 ```powershell
 1..100 | ForEach-Object {
   $body = @{ room = "general"; user = "load"; text = "message $_" } | ConvertTo-Json -Compress
-  Invoke-RestMethod -Method Post -Uri http://localhost:8082/send -ContentType "application/json" -Body $body | Out-Null
+  Invoke-RestMethod -Method Post -Uri "http://localhost:8082/index.php?route=/send" -ContentType "application/json" -Body $body | Out-Null
 }
 ```
 
@@ -269,12 +338,12 @@ For the Apache messaging backend, record results with client-side output, HTTP h
 
 Save a single request's timing headers:
 ```powershell
-curl.exe -D ".\logs and des\apache_health_headers.txt" -o NUL http://localhost:8082/health
+curl.exe -D ".\logs and des\apache_health_headers.txt" -o NUL "http://localhost:8082/index.php?route=/health"
 ```
 
 Save a message snapshot:
 ```powershell
-Invoke-RestMethod "http://localhost:8082/messages?room=general&since_id=0&limit=50" | ConvertTo-Json -Depth 6 | Out-File ".\logs and des\apache_messages_snapshot.json"
+Invoke-RestMethod "http://localhost:8082/index.php?route=/messages&room=general&since_id=0&limit=50" | ConvertTo-Json -Depth 6 | Out-File ".\logs and des\apache_messages_snapshot.json"
 ```
 
 Save Apache container logs:
@@ -284,7 +353,7 @@ docker compose logs apache | Out-File ".\logs and des\apache_docker.log"
 
 Save load-generator summaries:
 ```powershell
-python .\poisson_load_generator.py --url "http://localhost:8082/health" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_health_load_200rps.txt"
+python .\poisson_load_generator.py --url "http://localhost:8082/index.php?route=/health" --rate 200 --duration 60 | Tee-Object ".\logs and des\apache_health_load_200rps.txt"
 ```
 
 Optional metrics stack for container-level CPU and memory:
@@ -302,6 +371,27 @@ Important:
 - The Apache messaging backend does **not** currently write request-level CSV traces, so `requests.csv` will not contain Apache route timings unless you add separate logging for that service.
 - Messages are stored in the Apache container at `/tmp/apache_messages.jsonl`. Recreating the container resets that message store.
 
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+curl -X POST http://localhost:8082/send -H "Content-Type: application/json" -d '{"room":"general","user":"alice","text":"hello"}'
+curl "http://localhost:8082/messages?room=general&since_id=0&limit=50"
+```
+
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 
 Plotting
 --------

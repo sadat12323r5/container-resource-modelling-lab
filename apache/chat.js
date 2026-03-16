@@ -23,6 +23,17 @@ const activeRoomLabel = document.getElementById("activeRoomLabel");
 const serviceLabel = document.getElementById("serviceLabel");
 const healthBadge = document.getElementById("healthBadge");
 
+function apiUrl(route, params = null) {
+    const url = new URL("/index.php", window.location.origin);
+    url.searchParams.set("route", route);
+    if (params) {
+        for (const [key, value] of params.entries()) {
+            url.searchParams.append(key, value);
+        }
+    }
+    return url.toString();
+}
+
 function setInputsFromState() {
     roomInput.value = state.room;
     userInput.value = state.user;
@@ -121,7 +132,7 @@ function resetRoomState() {
 
 async function fetchHealth() {
     try {
-        const response = await fetch("/health", { cache: "no-store" });
+        const response = await fetch(apiUrl("/health"), { cache: "no-store" });
         if (!response.ok) {
             throw new Error(`health ${response.status}`);
         }
@@ -152,7 +163,7 @@ async function fetchMessages({ reset = false } = {}) {
     });
 
     try {
-        const response = await fetch(`/messages?${query.toString()}`, { cache: "no-store" });
+        const response = await fetch(apiUrl("/messages", query), { cache: "no-store" });
         updateServiceLabel(response.headers);
         if (!response.ok) {
             throw new Error(`messages ${response.status}`);
@@ -190,7 +201,7 @@ async function sendMessage(event) {
     sendButton.disabled = true;
 
     try {
-        const response = await fetch("/send", {
+        const response = await fetch(apiUrl("/send"), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",

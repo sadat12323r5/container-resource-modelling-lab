@@ -63,6 +63,10 @@ function send_json(int $status, array $payload): void {
     echo json_encode($payload) . "\n";
 }
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 function send_html_file(string $path): void {
     if (!file_exists($path)) {
         http_response_code(500);
@@ -75,6 +79,14 @@ function send_html_file(string $path): void {
     readfile($path);
 }
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 function append_message(string $path, array $msg): void {
     $dir = dirname($path);
     if (!is_dir($dir)) {
@@ -164,17 +176,59 @@ $serviceEnd = hrtime(true);
 $actualServiceMs = ($serviceEnd - $serviceStart) / 1_000_000.0;
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+$requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+$path = parse_url($requestUri, PHP_URL_PATH);
+$query = $_GET;
+$routeOverride = trim((string)($query['route'] ?? ''));
+if ($routeOverride !== '') {
+    $path = '/' . ltrim($routeOverride, '/');
+} elseif (str_starts_with($path, '/index.php/')) {
+    $path = substr($path, strlen('/index.php'));
+    if ($path === '') {
+        $path = '/';
+    }
+}
+=======
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $query = $_GET;
+>>>>>>> theirs
+=======
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+$query = $_GET;
+>>>>>>> theirs
+=======
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+$query = $_GET;
+>>>>>>> theirs
+=======
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+$query = $_GET;
+>>>>>>> theirs
 
 header('X-Service-Target-Us: ' . number_format($serviceUs, 3, '.', ''));
 header('X-Service-Actual-Ms: ' . number_format($actualServiceMs, 3, '.', ''));
 
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 if (($path === '/' || $path === '/index.html') && $method === 'GET') {
     send_html_file(__DIR__ . '/chat.html');
     exit;
 }
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 if ($path === '/health') {
     send_json(200, ['ok' => true]);
     exit;
