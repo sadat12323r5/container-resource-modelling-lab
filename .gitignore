@@ -1,0 +1,20 @@
+# AI assistant tooling
+.claude/
+CLAUDE.md
+memory/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+
+# Experiment outputs (large generated files)
+logs and des/experiments/
+logs and des/requests_old_backup.csv
+
+# OS
+.DS_Store
+Thumbs.db

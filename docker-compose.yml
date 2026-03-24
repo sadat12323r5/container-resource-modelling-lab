@@ -19,7 +19,7 @@ services:
 
       # Service-demand model (sampled per request, in microseconds)
       - SERVICE_DIST=lognormal
-      - SERVICE_MEAN_US=200
+      - SERVICE_MEAN_US=2000
       - SERVICE_LOGN_SIGMA=0.5
 
       # Work calibration stability (bigger = steadier, slower startup)
@@ -38,12 +38,13 @@ services:
     stop_grace_period: 10s
     environment:
       - APACHE_SERVICE_DIST=lognormal
-      - APACHE_SERVICE_MEAN_US=200
+      - APACHE_SERVICE_MEAN_US=2000
       - APACHE_SERVICE_LOGN_SIGMA=0.5
       - APACHE_MESSAGES_FILE=/tmp/apache_messages.jsonl
       - APACHE_MAX_TEXT_BYTES=1024
     volumes:
       - ./apache:/var/www/html:ro
+      - ./apache/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
