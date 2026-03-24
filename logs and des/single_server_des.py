@@ -125,7 +125,7 @@ def load_trace(path):
 
 def prepare_observed(rows):
     """Return arrival timestamps and per-request ms values for status=200 rows."""
-    ok = [r for r in rows if str(r.get("status_code", "")) == "200"]
+    ok = [r for r in rows if str(r.get("status_code", "")).startswith("2")]
     if not ok:
         raise ValueError("no successful (status_code=200) rows in input CSV")
     ok.sort(key=lambda r: int(r["arrival_unix_ns"]))

@@ -42,9 +42,12 @@ services:
       - APACHE_SERVICE_LOGN_SIGMA=0.5
       - APACHE_MESSAGES_FILE=/tmp/apache_messages.jsonl
       - APACHE_MAX_TEXT_BYTES=1024
+      - APACHE_MAX_MESSAGES=1000
+      - APACHE_TRACE_CSV=/app/logs/apache_requests.csv
     volumes:
       - ./apache:/var/www/html:ro
       - ./apache/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
+      - "./logs and des:/app/logs"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest

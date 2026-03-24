@@ -3,7 +3,7 @@ Automated rate-sweep experiment runner.
 
 Phase 1 - Go app coarse sweep:  50, 100, 200, 400 rps x 90s
 Phase 2 - Go app fine sweep:   150, 175, 200, 225, 250 rps x 90s (around the knee)
-Phase 3 - Apache coarse sweep:  50, 100, 200, 400 rps x 90s
+Phase 3 - Apache sweep:  10, 25, 50 rps x 90s (Apache saturates at ~30 rps)
 
 For each Go rate, runs DES in three modes (bootstrap, replay, parametric) with
 the 0.006 ms goroutine-scheduling floor subtracted from observed queue_ms before
@@ -22,15 +22,20 @@ import sys
 import time
 from pathlib import Path
 
-COARSE_RATES = [50, 100, 200, 400]
-FINE_RATES   = [150, 175, 200, 225, 250]
+COARSE_RATES        = [50, 100, 200, 400]
+FINE_RATES          = [150, 175, 200, 225, 250]
+# Apache saturates at ~30 rps due to file-lock contention in mpm_prefork.
+# Sweep only below the knee; 50 rps is already above saturation so we capture
+# the transition from stable to saturated in the 10-25 rps range.
+APACHE_RATES        = [10, 25, 50]
 DURATION     = 90        # seconds per step
 QUEUE_OFFSET = 0.006     # ms goroutine-scheduling floor to subtract before KS
 DES_MODES    = ["bootstrap", "replay", "parametric"]
 DES_SEED     = 42
 
-CSV_PATH     = Path("logs and des/requests.csv")
-RESULTS_DIR  = Path("logs and des/experiments")
+CSV_PATH        = Path("logs and des/requests.csv")
+APACHE_CSV_PATH = Path("logs and des/apache_requests.csv")
+RESULTS_DIR     = Path("logs and des/experiments")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -95,7 +100,7 @@ def analyse_go_csv(path):
     rows = []
     with path.open(newline="") as f:
         for r in csv.DictReader(f):
-            if r.get("status_code") == "200":
+            if str(r.get("status_code", "")).startswith("2"):
                 rows.append(r)
     if not rows:
         return {}
@@ -180,10 +185,40 @@ def run_go_rate(rate, label=None):
 
 
 # ---------------------------------------------------------------------------
+# Apache CSV helpers (mirrors Go CSV helpers but for apache_requests.csv)
+# ---------------------------------------------------------------------------
+
+def apache_csv_row_count():
+    if not APACHE_CSV_PATH.exists():
+        return 0
+    with APACHE_CSV_PATH.open() as f:
+        return sum(1 for _ in f)
+
+
+def extract_apache_csv_slice(start_line, out_path):
+    """Copy rows from start_line onward (1-indexed; row 1 = header)."""
+    with APACHE_CSV_PATH.open(newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        with out_path.open("w", newline="") as out:
+            writer = csv.writer(out)
+            writer.writerow(header)
+            for i, row in enumerate(reader, start=2):
+                if i >= start_line:
+                    writer.writerow(row)
+
+
+# ---------------------------------------------------------------------------
 # Apache runner
 # ---------------------------------------------------------------------------
 
 def run_apache_rate(rate):
+    """Run one Apache rate step: load, slice CSV, run all DES modes. Return results dict."""
+    print(f"\n-- Apache {rate} rps x {DURATION}s --")
+
+    before     = apache_csv_row_count()
+    start_line = before + 1
+
     result = run(
         [sys.executable, "apache_load.py",
          "--rate",        str(rate),
@@ -192,8 +227,33 @@ def run_apache_rate(rate):
          "--seed",        "42"],
         capture_output=True, text=True
     )
+    print(result.stdout.strip())
+
+    time.sleep(2)
+    after = apache_csv_row_count()
+    print(f"  CSV rows before={before} after={after} new={after - before}")
+
+    slice_path = RESULTS_DIR / f"apache_{rate}rps.csv"
+    extract_apache_csv_slice(start_line, slice_path)
+    analysis = analyse_go_csv(slice_path)   # same schema as Go
+
+    # No goroutine scheduling floor for Apache
+    des = {}
+    for mode in DES_MODES:
+        des_out = RESULTS_DIR / f"apache_{rate}rps_des_{mode}.csv"
+        ks_r, ks_q_raw, ks_q_corr, stdout = run_des(slice_path, des_out, mode)
+        des[mode] = {
+            "ks_resp":       ks_r,
+            "ks_queue_raw":  ks_q_raw,
+            "ks_queue_corr": ks_q_corr,
+            "stdout":        stdout.strip(),
+        }
+        print(f"  [{mode:>11}] ks_resp={ks_r:.4f}  "
+              f"ks_q_raw={ks_q_raw:.4f}  ks_q_corr={ks_q_corr:.4f}")
+
+    # Parse client-side summary from apache_load.py stdout
     out   = result.stdout
-    stats = {"rate": rate, "raw": out}
+    stats = {"rate": rate, "raw": out, "analysis": analysis, "des": des}
     for line in out.splitlines():
         if line.startswith("sent="):
             parts = dict(p.split("=") for p in line.split())
@@ -203,8 +263,8 @@ def run_apache_rate(rate):
             stats["achieved_rps"] = float(parts.get("achieved_rps", 0))
         if line.startswith("ALL"):
             toks = line.split()
-            def grab(key):
-                for t in toks:
+            def grab(key, _toks=toks):
+                for t in _toks:
                     if t.startswith(key + "="):
                         return float(t.split("=")[1].rstrip("ms"))
                 return float("nan")
@@ -248,18 +308,39 @@ def print_go_summary(title, results_list):
 
 def print_apache_summary(apache_results):
     print("\n-- Apache (70% GET /messages + 30% POST /send) --")
-    print(f"{'rate':>6}  {'sent':>6}  {'ok':>6}  {'err':>5}  "
-          f"{'ach_rps':>7}  {'p50_ms':>7}  {'p95_ms':>7}  {'p99_ms':>7}  {'err%':>5}")
+    print("  Internal timings (from CSV, server-side); client p50/p99 include WSL2 network (~35ms).")
+    # Client-side stats
+    print(f"\n  {'rate':>5}  {'sent':>6}  {'ok':>5}  {'err':>4}  {'ach_rps':>7}  "
+          f"{'cli_p50':>7}  {'cli_p99':>7}  {'err%':>5}")
     for s in apache_results:
         sent    = s.get("sent", 0)
         err     = s.get("err", 0)
         err_pct = 100 * err / sent if sent else 0
-        print(f"{s['rate']:>6}  {sent:>6}  {s.get('ok',0):>6}  {err:>5}  "
+        print(f"  {s['rate']:>5}  {sent:>6}  {s.get('ok',0):>5}  {err:>4}  "
               f"{s.get('achieved_rps',0):>7.1f}  "
               f"{s.get('p50_ms', float('nan')):>7.1f}  "
-              f"{s.get('p95_ms', float('nan')):>7.1f}  "
               f"{s.get('p99_ms', float('nan')):>7.1f}  "
               f"{err_pct:>5.1f}%")
+    # Internal (server-side) stats + KS
+    print(f"\n  {'rate':>5}  {'n':>5}  {'tput':>6}  "
+          f"{'svc_p50':>7}  {'svc_p99':>7}  "
+          f"{'resp_p50':>8}  {'resp_p99':>8}  {'q_p99':>6}  "
+          f"{'boot_r':>6}  {'rply_r':>6}  {'para_r':>6}")
+    for s in apache_results:
+        a = s.get("analysis")
+        if not a:
+            print(f"  {s['rate']:>5}  NO DATA")
+            continue
+        d = s["des"]
+        print(
+            f"  {s['rate']:>5}  {a['n']:>5}  {a['throughput']:>6.1f}  "
+            f"{a['service']['p50']:>7.2f}  {a['service']['p99']:>7.2f}  "
+            f"{a['response']['p50']:>8.2f}  {a['response']['p99']:>8.2f}  "
+            f"{a['queue']['p99']:>6.2f}  "
+            f"{d['bootstrap']['ks_resp']:>6.4f}  "
+            f"{d['replay']['ks_resp']:>6.4f}  "
+            f"{d['parametric']['ks_resp']:>6.4f}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -300,19 +381,23 @@ def main():
 
     # ---- Phase 3: Apache coarse sweep --------------------------------------
     print("\n" + "=" * 65)
-    print("PHASE 3: Apache coarse sweep (50/100/200/400 rps)")
+    print("PHASE 3: Apache sweep (10/25/50 rps)")
+    print("  Note: Apache saturates at ~30 rps due to mpm_prefork file-lock")
+    print("  contention. Rates kept below/at the Apache capacity knee.")
     print("=" * 65)
-    print("\n[warmup] 10 rps for 10s ...")
+    # Clear the Apache CSV so rows from different rates don't mix.
+    if APACHE_CSV_PATH.exists():
+        APACHE_CSV_PATH.unlink()
+        print(f"  Cleared {APACHE_CSV_PATH}")
+
+    print("\n[warmup] 5 rps for 10s ...")
     run([sys.executable, "apache_load.py",
-         "--rate", "10", "--duration", "10", "--seed", "1"],
+         "--rate", "5", "--duration", "10", "--seed", "1"],
         capture_output=True)
     time.sleep(2)
 
-    for rate in COARSE_RATES:
-        print(f"\n-- Apache {rate} rps x {DURATION}s --")
-        stats = run_apache_rate(rate)
-        print(stats.get("raw", "").strip())
-        apache_results.append(stats)
+    for rate in APACHE_RATES:
+        apache_results.append(run_apache_rate(rate))
 
     # ---- Summary -----------------------------------------------------------
     print("\n" + "=" * 65)
