@@ -282,6 +282,22 @@ func main() {
 			w.Header().Set("X-Request-Id", traceID)
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("queue full\n"))
+			// Log the rejected arrival so DES receives the full Poisson stream
+			// (including dropped requests) and can exercise the queue-capacity model.
+			// service_start, service_end, response_end are zero; queue/service/response_ms
+			// are 0.000 because no service was rendered.
+			rejectionEnd := time.Now()
+			rejMs := rejectionEnd.Sub(arrival).Seconds() * 1000
+			logCh <- []string{
+				strconv.FormatUint(id, 10),
+				traceID,
+				strconv.FormatInt(arrival.UnixNano(), 10),
+				"0", "0", "0",
+				"0.000", "0.000",
+				strconv.FormatFloat(rejMs, 'f', 3, 64),
+				strconv.Itoa(http.StatusServiceUnavailable),
+				"0",
+			}
 			return
 		}
 

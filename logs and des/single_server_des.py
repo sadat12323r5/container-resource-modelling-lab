@@ -48,6 +48,19 @@ def parse_args():
             "Typical value: 0.006 ms."
         ),
     )
+    parser.add_argument(
+        "--queue-capacity",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Maximum number of jobs that may wait in the simulated queue. "
+            "Arrivals that find the queue full are dropped (sim_status=503) and "
+            "excluded from KS comparison. "
+            "Set to match the server's JOB_QUEUE setting (default: unlimited). "
+            "Go server default: 1024."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -124,10 +137,10 @@ def load_trace(path):
 
 
 def prepare_observed(rows):
-    """Return arrival timestamps and per-request ms values for status=200 rows."""
+    """Return arrival timestamps and per-request ms values for status=2xx rows."""
     ok = [r for r in rows if str(r.get("status_code", "")).startswith("2")]
     if not ok:
-        raise ValueError("no successful (status_code=200) rows in input CSV")
+        raise ValueError("no successful (status_code=2xx) rows in input CSV")
     ok.sort(key=lambda r: int(r["arrival_unix_ns"]))
 
     arrivals_ns = [int(r["arrival_unix_ns"]) for r in ok]
@@ -137,7 +150,19 @@ def prepare_observed(rows):
     return arrivals_ns, service_ms, queue_ms, response_ms
 
 
-def simulate(arrivals_ns, observed_service_ms, mode, seed):
+def simulate(arrivals_ns, observed_service_ms, mode, seed, queue_capacity=None):
+    """
+    Simulate a single-server FCFS queue driven by observed arrival timestamps.
+
+    queue_capacity: maximum number of jobs waiting (not in service) before new
+    arrivals are dropped (sim_status=503). None means unlimited. Matches the Go
+    server's JOB_QUEUE channel buffer (default 1024).
+
+    Queue-depth tracking: maintain `scheduled_waiting`, a sorted list of the
+    scheduled start times of jobs that have arrived but not yet started service.
+    When a new job arrives at time t, any entry s <= t has already started service
+    and is pruned. The remaining length is the current waiting count.
+    """
     rng = random.Random(seed)
 
     if mode == "replay":
@@ -160,19 +185,56 @@ def simulate(arrivals_ns, observed_service_ms, mode, seed):
     sim_response_ms = []
     sim_service_start_ns = []
     sim_service_end_ns = []
+    sim_dropped = []          # True when queue was full at arrival
     prev_end_ns = arrivals_ns[0]
+
+    # Sorted list of scheduled start times for jobs waiting (not yet in service).
+    # Start times are always > the arrival time of the job that added them (because
+    # start_ns = prev_end_ns > arrival_ns for any job that had to wait). Pruning
+    # entries <= current arrival_ns removes jobs that have since started service.
+    scheduled_waiting = []
 
     for arrival_ns, svc_ms in zip(arrivals_ns, sampled_service_ms):
         service_ns = int(round(svc_ms * 1_000_000.0))
-        start_ns   = max(arrival_ns, prev_end_ns)
-        end_ns     = start_ns + service_ns
-        q_ms       = (start_ns - arrival_ns) / 1_000_000.0
-        r_ms       = (end_ns   - arrival_ns) / 1_000_000.0
+
+        # Prune jobs that have started service by the time this job arrives.
+        # scheduled_waiting is ascending, so we can scan from the front.
+        prune_idx = 0
+        while prune_idx < len(scheduled_waiting) and scheduled_waiting[prune_idx] <= arrival_ns:
+            prune_idx += 1
+        if prune_idx:
+            scheduled_waiting = scheduled_waiting[prune_idx:]
+
+        queue_depth = len(scheduled_waiting)  # jobs waiting (not in service)
+
+        if arrival_ns >= prev_end_ns:
+            # Server is idle: job starts immediately, nothing waiting.
+            start_ns = arrival_ns
+            # scheduled_waiting is already empty or all entries <= arrival_ns (already pruned).
+        else:
+            # Server is busy.
+            if queue_capacity is not None and queue_depth >= queue_capacity:
+                # Queue full: drop this request (mirrors Go server 503 behaviour).
+                sim_service_start_ns.append(-1)
+                sim_service_end_ns.append(-1)
+                sim_queue_ms.append(float("nan"))
+                sim_response_ms.append(float("nan"))
+                sim_dropped.append(True)
+                continue  # prev_end_ns unchanged; dropped job never enters service
+
+            # Job waits: it will start when the last scheduled job ends.
+            start_ns = prev_end_ns
+            scheduled_waiting.append(start_ns)  # start_ns > arrival_ns (always)
+
+        end_ns = start_ns + service_ns
+        q_ms   = (start_ns - arrival_ns) / 1_000_000.0
+        r_ms   = (end_ns   - arrival_ns) / 1_000_000.0
 
         sim_service_start_ns.append(start_ns)
         sim_service_end_ns.append(end_ns)
         sim_queue_ms.append(q_ms)
         sim_response_ms.append(r_ms)
+        sim_dropped.append(False)
         prev_end_ns = end_ns
 
     return {
@@ -181,6 +243,7 @@ def simulate(arrivals_ns, observed_service_ms, mode, seed):
         "sim_response_ms":      sim_response_ms,
         "sim_service_start_ns": sim_service_start_ns,
         "sim_service_end_ns":   sim_service_end_ns,
+        "sim_dropped":          sim_dropped,
     }
 
 
@@ -195,16 +258,24 @@ def write_sim_csv(path, arrivals_ns, sim_data):
             "sim_queue_ms",
             "sim_service_ms",
             "sim_response_ms",
+            "sim_status",
         ])
         for i, arrival_ns in enumerate(arrivals_ns):
-            writer.writerow([
-                arrival_ns,
-                sim_data["sim_service_start_ns"][i],
-                sim_data["sim_service_end_ns"][i],
-                f"{sim_data['sim_queue_ms'][i]:.6f}",
-                f"{sim_data['sampled_service_ms'][i]:.6f}",
-                f"{sim_data['sim_response_ms'][i]:.6f}",
-            ])
+            dropped = sim_data["sim_dropped"][i]
+            if dropped:
+                writer.writerow([
+                    arrival_ns, "", "", "", "", "", 503,
+                ])
+            else:
+                writer.writerow([
+                    arrival_ns,
+                    sim_data["sim_service_start_ns"][i],
+                    sim_data["sim_service_end_ns"][i],
+                    f"{sim_data['sim_queue_ms'][i]:.6f}",
+                    f"{sim_data['sampled_service_ms'][i]:.6f}",
+                    f"{sim_data['sim_response_ms'][i]:.6f}",
+                    200,
+                ])
 
 
 def main():
@@ -224,17 +295,38 @@ def main():
     # Parametric fit info (printed regardless of mode, useful for reference).
     mu_fit, sigma_fit = fit_lognormal(obs_service_ms)
 
-    sim_data = simulate(arrivals_ns, obs_service_ms, args.mode, args.seed)
+    sim_data = simulate(
+        arrivals_ns, obs_service_ms, args.mode, args.seed,
+        queue_capacity=args.queue_capacity,
+    )
+
+    # Split sim results into admitted (served) and dropped.
+    admitted_idx = [i for i, d in enumerate(sim_data["sim_dropped"]) if not d]
+    n_total   = len(arrivals_ns)
+    n_dropped = sum(sim_data["sim_dropped"])
+    n_admitted = len(admitted_idx)
+
+    sim_resp_admitted  = [sim_data["sim_response_ms"][i] for i in admitted_idx]
+    sim_queue_admitted = [sim_data["sim_queue_ms"][i]    for i in admitted_idx]
+    sim_svc_admitted   = [sim_data["sampled_service_ms"][i] for i in admitted_idx]
 
     obs_resp_summary = summarize("observed_response_ms", obs_response_ms)
-    sim_resp_summary = summarize("sim_response_ms",      sim_data["sim_response_ms"])
     obs_q_summary    = summarize("observed_queue_ms",    obs_queue_ms)
     obs_qc_summary   = summarize("observed_queue_corrected_ms", obs_queue_corrected)
-    sim_q_summary    = summarize("sim_queue_ms",         sim_data["sim_queue_ms"])
     obs_s_summary    = summarize("observed_service_ms",  obs_service_ms)
-    sim_s_summary    = summarize("sim_service_ms",       sim_data["sampled_service_ms"])
 
-    print(f"input={input_path} mode={args.mode} seed={args.seed} queue_offset={offset}")
+    sim_resp_summary = summarize("sim_response_ms",  sim_resp_admitted)
+    sim_q_summary    = summarize("sim_queue_ms",     sim_queue_admitted)
+    sim_s_summary    = summarize("sim_service_ms",   sim_svc_admitted)
+
+    print(
+        f"input={input_path} mode={args.mode} seed={args.seed} "
+        f"queue_offset={offset} queue_capacity={args.queue_capacity}"
+    )
+    print(
+        f"n_total={n_total} n_admitted={n_admitted} "
+        f"n_dropped={n_dropped} drop_rate={n_dropped/n_total:.4f}"
+    )
     print(f"lognormal_fit: mu={mu_fit:.6f} sigma={sigma_fit:.6f} "
           f"implied_mean_ms={math.exp(mu_fit + 0.5*sigma_fit**2):.6f}")
     print_summary("observed_response_ms",          obs_resp_summary)
@@ -245,9 +337,10 @@ def main():
     print_summary("observed_service_ms",           obs_s_summary)
     print_summary("sim_service_ms",                sim_s_summary)
 
-    ks_resp           = ks_like_distance(obs_response_ms,      sim_data["sim_response_ms"])
-    ks_queue_raw      = ks_like_distance(obs_queue_ms,         sim_data["sim_queue_ms"])
-    ks_queue_corrected = ks_like_distance(obs_queue_corrected, sim_data["sim_queue_ms"])
+    # KS distances: sim side uses admitted requests only (mirrors observed 2xx filter).
+    ks_resp            = ks_like_distance(obs_response_ms,      sim_resp_admitted)
+    ks_queue_raw       = ks_like_distance(obs_queue_ms,         sim_queue_admitted)
+    ks_queue_corrected = ks_like_distance(obs_queue_corrected,  sim_queue_admitted)
 
     print(f"ks_like_response={ks_resp:.6f}")
     print(f"ks_like_queue={ks_queue_raw:.6f}")

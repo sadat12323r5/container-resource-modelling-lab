@@ -28,8 +28,9 @@ FINE_RATES          = [150, 175, 200, 225, 250]
 # Sweep only below the knee; 50 rps is already above saturation so we capture
 # the transition from stable to saturated in the 10-25 rps range.
 APACHE_RATES        = [10, 25, 50]
-DURATION     = 90        # seconds per step
-QUEUE_OFFSET = 0.006     # ms goroutine-scheduling floor to subtract before KS
+DURATION          = 90        # seconds per step
+QUEUE_OFFSET      = 0.006     # ms goroutine-scheduling floor to subtract before KS
+GO_QUEUE_CAPACITY = 1024      # matches JOB_QUEUE channel buffer in server_single/main.go
 DES_MODES    = ["bootstrap", "replay", "parametric"]
 DES_SEED     = 42
 
@@ -122,17 +123,19 @@ def analyse_go_csv(path):
 # DES runner
 # ---------------------------------------------------------------------------
 
-def run_des(input_csv, output_csv, mode):
-    result = run(
-        [sys.executable, "logs and des/single_server_des.py",
-         "--input",        str(input_csv),
-         "--output",       str(output_csv),
-         "--mode",         mode,
-         "--seed",         str(DES_SEED),
-         "--queue-offset", str(QUEUE_OFFSET)],
-        capture_output=True, text=True
-    )
+def run_des(input_csv, output_csv, mode, queue_capacity=None):
+    cmd = [sys.executable, "logs and des/single_server_des.py",
+           "--input",        str(input_csv),
+           "--output",       str(output_csv),
+           "--mode",         mode,
+           "--seed",         str(DES_SEED),
+           "--queue-offset", str(QUEUE_OFFSET)]
+    if queue_capacity is not None:
+        cmd += ["--queue-capacity", str(queue_capacity)]
+    result = run(cmd, capture_output=True, text=True)
     ks_resp = ks_q_raw = ks_q_corr = None
+    n_dropped = 0
+    drop_rate = 0.0
     for line in result.stdout.splitlines():
         if line.startswith("ks_like_response="):
             ks_resp = float(line.split("=")[1])
@@ -140,7 +143,11 @@ def run_des(input_csv, output_csv, mode):
             ks_q_corr = float(line.split("=")[1])
         elif line.startswith("ks_like_queue="):
             ks_q_raw = float(line.split("=")[1])
-    return ks_resp, ks_q_raw, ks_q_corr, result.stdout
+        elif line.startswith("n_total="):
+            parts = dict(p.split("=") for p in line.split())
+            n_dropped = int(parts.get("n_dropped", 0))
+            drop_rate = float(parts.get("drop_rate", 0.0))
+    return ks_resp, ks_q_raw, ks_q_corr, n_dropped, drop_rate, result.stdout
 
 
 def run_go_rate(rate, label=None):
@@ -171,15 +178,20 @@ def run_go_rate(rate, label=None):
     des = {}
     for mode in DES_MODES:
         des_out = RESULTS_DIR / f"go_{tag}_des_{mode}.csv"
-        ks_r, ks_q_raw, ks_q_corr, stdout = run_des(slice_path, des_out, mode)
+        ks_r, ks_q_raw, ks_q_corr, n_dropped, drop_rate, stdout = run_des(
+            slice_path, des_out, mode, queue_capacity=GO_QUEUE_CAPACITY
+        )
         des[mode] = {
             "ks_resp":       ks_r,
             "ks_queue_raw":  ks_q_raw,
             "ks_queue_corr": ks_q_corr,
+            "n_dropped":     n_dropped,
+            "drop_rate":     drop_rate,
             "stdout":        stdout.strip(),
         }
+        drop_str = f"  drop={n_dropped}({drop_rate:.1%})" if n_dropped else ""
         print(f"  [{mode:>11}] ks_resp={ks_r:.4f}  "
-              f"ks_q_raw={ks_q_raw:.4f}  ks_q_corr={ks_q_corr:.4f}")
+              f"ks_q_raw={ks_q_raw:.4f}  ks_q_corr={ks_q_corr:.4f}{drop_str}")
 
     return {"rate": rate, "analysis": analysis, "des": des, "load_out": result.stdout.strip()}
 
@@ -237,11 +249,11 @@ def run_apache_rate(rate):
     extract_apache_csv_slice(start_line, slice_path)
     analysis = analyse_go_csv(slice_path)   # same schema as Go
 
-    # No goroutine scheduling floor for Apache
+    # No goroutine scheduling floor and no queue-capacity model for Apache
     des = {}
     for mode in DES_MODES:
         des_out = RESULTS_DIR / f"apache_{rate}rps_des_{mode}.csv"
-        ks_r, ks_q_raw, ks_q_corr, stdout = run_des(slice_path, des_out, mode)
+        ks_r, ks_q_raw, ks_q_corr, _, _, stdout = run_des(slice_path, des_out, mode)
         des[mode] = {
             "ks_resp":       ks_r,
             "ks_queue_raw":  ks_q_raw,
@@ -284,7 +296,8 @@ def print_go_summary(title, results_list):
            f"{'svc_p50':>7}  {'svc_p99':>7}  "
            f"{'resp_p50':>8}  {'resp_p99':>8}  {'q_p99':>6}  "
            f"{'boot_r':>6}  {'rply_r':>6}  {'para_r':>6}  "
-           f"{'boot_qc':>7}  {'rply_qc':>7}  {'para_qc':>7}")
+           f"{'boot_qc':>7}  {'rply_qc':>7}  {'para_qc':>7}  "
+           f"{'drop%':>6}")
     print(hdr)
     for r in results_list:
         a = r["analysis"]
@@ -292,6 +305,8 @@ def print_go_summary(title, results_list):
             print(f"{r['rate']:>6}  NO DATA")
             continue
         d = r["des"]
+        # Use replay drop_rate as the representative figure (all modes see same arrivals)
+        drop_pct = 100.0 * d["replay"].get("drop_rate", 0.0)
         print(
             f"{r['rate']:>6}  {a['n']:>6}  {a['throughput']:>6.1f}  "
             f"{a['service']['p50']:>7.2f}  {a['service']['p99']:>7.2f}  "
@@ -302,7 +317,8 @@ def print_go_summary(title, results_list):
             f"{d['parametric']['ks_resp']:>6.4f}  "
             f"{d['bootstrap']['ks_queue_corr']:>7.4f}  "
             f"{d['replay']['ks_queue_corr']:>7.4f}  "
-            f"{d['parametric']['ks_queue_corr']:>7.4f}"
+            f"{d['parametric']['ks_queue_corr']:>7.4f}  "
+            f"{drop_pct:>5.1f}%"
         )
 
 
@@ -420,7 +436,8 @@ def main():
     json_path = RESULTS_DIR / "experiment_results.json"
     with json_path.open("w") as f:
         json.dump({
-            "queue_offset_ms": QUEUE_OFFSET,
+            "queue_offset_ms":    QUEUE_OFFSET,
+            "go_queue_capacity":  GO_QUEUE_CAPACITY,
             "coarse": coarse_results,
             "fine":   fine_results,
             "apache": apache_results,

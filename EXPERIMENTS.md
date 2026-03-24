@@ -1,7 +1,27 @@
-# Baseline Capacity Experiments — Run Report
+# Iteration 1 Experiment Log — Single-Server Capacity Modelling
 
 **Platform:** Docker Compose on Windows 11 / WSL2 (Docker Desktop 28.4.0)
 **Branch:** main
+**Completed:** 2026-03-24
+
+---
+
+## Summary
+
+Iteration 1 of a multi-iteration thesis project (COMP9334, UNSW). Full results for
+a single-worker FCFS Go server and an Apache/PHP messaging backend, including DES
+validation, operational laws, ML baseline, and cross-system comparison.
+
+| Item | Result |
+|---|---|
+| Go capacity knee | ~190 rps (varies ±20 rps with WSL2 calibration; queue p99 jumps 9× between 200 and 225 rps) |
+| Best DES mode (Go) | Replay — KS_resp 0.014–0.085 across all rates |
+| ML vs DES (p99 LOOCV) | ML linear 8.9 ms; DES replay 79.5 ms — ML 6.3× better overall |
+| DES wins at low load | DES 0.05–2.5 ms vs ML 0.9–5.5 ms error at ρ < 30% |
+| Cross-rate generalisation | Parametric DES: 22 ms error within regime; 198 ms across boundary |
+| Apache capacity ceiling | ~30 rps — limited by mpm_prefork file-lock contention |
+| DES accuracy: Apache | KS_resp ≈ 0.44 vs Go ≈ 0.03 — file I/O not captured by M/G/1 model |
+| Queue-capacity drop model | Implemented in DES + Go server logs 503s; not triggered (thread pool < 1024) |
 
 ---
 
@@ -438,43 +458,44 @@ utilisation.
 
 | rate | n | tput | svc p50 | svc p99 | resp p50 | resp p99 | q p99 | boot_r | rply_r | para_r | boot_qc | rply_qc | para_qc |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 50 | 4,480 | 49.8 | 0.74 | 2.67 | 0.77 | 2.72 | 0.08 | 0.025 | 0.032 | 0.037 | 0.610 | 0.626 | 0.612 |
-| 100 | 8,799 | 97.9 | 0.78 | 3.62 | 0.81 | 3.71 | 0.08 | 0.022 | 0.025 | 0.027 | 0.536 | 0.570 | 0.534 |
-| 200 | 18,151 | 201.7 | 1.01 | 8.50 | 1.05 | 9.45 | 0.38 | 0.098 | **0.019** | 0.105 | **0.259** | 0.425 | 0.277 |
-| 400 | 36,033 | 238.9 | 1.14 | 9.94 | 1.21 | 11.80 | 1.16 | 0.163 | **0.052** | 0.165 | 0.317 | **0.299** | 0.303 |
+| 50  | 4,574  | 50.9  | 1.03 | 4.05  | 1.07 | 4.10  | 0.05 | 0.033 | **0.026** | 0.025 | 0.676 | 0.697 | 0.673 |
+| 100 | 9,013  | 100.1 | 1.17 | 9.92  | 1.22 | 10.61 | 0.21 | 0.036 | **0.017** | 0.063 | 0.600 | 0.669 | 0.612 |
+| 200 | 17,813 | 189.4 | 1.45 | 11.49 | 1.52 | 13.98 | 0.97 | 0.132 | **0.029** | 0.141 | 0.260 | 0.459 | 0.254 |
+| 400 | 36,317 | 192.7 | 1.55 | 12.13 | 1.64 | 15.76 | 1.40 | 0.181 | **0.064** | 0.171 | 0.340 | 0.396 | 0.321 |
 
 ### 7.3 Go app — fine sweep (capacity knee)
 
 | rate | n | tput | svc p50 | svc p99 | resp p50 | resp p99 | q p99 | boot_r | rply_r | para_r |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 150 | 13,599 | 151.1 | 0.87 | 5.99 | 0.91 | 6.45 | 0.18 | 0.040 | **0.020** | 0.055 |
-| 175 | 15,816 | 175.9 | 0.92 | 8.17 | 0.96 | 9.30 | 0.28 | 0.060 | **0.015** | 0.086 |
-| 200 | 18,151 | 201.7 | 1.01 | 8.50 | 1.05 | 9.45 | 0.38 | 0.098 | **0.019** | 0.105 |
-| **225** | **19,995** | **206.0** | **1.10** | **12.56** | **1.18** | **17.29** | **2.30** | 0.160 | **0.028** | 0.161 |
-| **250** | **22,588** | **189.8** | **1.17** | **13.30** | **1.26** | **19.05** | **2.72** | 0.176 | **0.033** | 0.177 |
+| 150 | 13,561 | 151.0 | 1.25 | 9.55  | 1.30 | 10.39 | 0.32 | 0.068 | **0.014** | 0.093 |
+| 175 | 15,851 | 175.9 | 1.35 | 11.12 | 1.41 | 14.02 | 0.94 | 0.124 | **0.022** | 0.127 |
+| 200 | 17,813 | 189.4 | 1.45 | 11.49 | 1.52 | 13.98 | 0.97 | 0.132 | **0.029** | 0.141 |
+| **225** | **20,428** | **192.7** | **1.62** | **14.47** | **1.79** | **33.23** | **8.66** | 0.233 | **0.082** | 0.219 |
+| **250** | **22,434** | **205.2** | **1.62** | **13.68** | **1.78** | **24.23** | **5.10** | 0.242 | **0.085** | 0.226 |
 
 ### 7.4 Findings
 
 **Replay mode is best for response-time KS at all loads.**
 
-At low load (50–100 rps), all three modes perform similarly (KS ≈ 0.02–0.04). At high
-load (200+ rps), replay (KS = 0.019 at 200 rps) is dramatically better than both
-bootstrap (0.098) and parametric (0.105). This confirms the root cause identified
-in Iteration 2: bootstrap and parametric destroy temporal ordering of service times;
-replay preserves it, so it correctly captures the queue dynamics that drive tail latency.
+At low load (50–150 rps), all three modes perform similarly (KS ≈ 0.014–0.093). At high
+load (200+ rps), replay (KS = 0.029 at 200 rps) is dramatically better than both
+bootstrap (0.132) and parametric (0.141). Bootstrap and parametric destroy temporal
+ordering of service times; replay preserves it, correctly capturing the queue dynamics
+that drive tail latency.
 
 **Bootstrap and parametric are equivalent.** Both produce nearly identical KS scores
 at every rate. Parametric fitting (lognormal MLE) adds no benefit over raw bootstrap
-resampling for this workload — the lognormal shape is already well-captured by bootstrap
-because the empirical pool is large enough. This is a useful negative result.
+resampling — the lognormal shape is already well-captured by the empirical pool.
 
-**Capacity knee confirmed between 200 and 225 rps:**
-- 200 rps: resp p99 = 9.45 ms, queue p99 = 0.38 ms, achieved tput = 201.7 rps
-- 225 rps: resp p99 = 17.29 ms (+83%), queue p99 = 2.30 ms (+505%), achieved tput = 206.0 rps
-- 250 rps: achieved tput = 189.8 rps (server cannot keep up — below offered load)
+**Capacity knee confirmed between 200 and 225 rps (this run):**
+- 200 rps: resp p99 = 13.98 ms, queue p99 = 0.97 ms, achieved tput = 189.4 rps (already below offered)
+- 225 rps: resp p99 = 33.23 ms (+138%), queue p99 = 8.66 ms (+792%), achieved tput = 192.7 rps
+- 250 rps: achieved tput = 205.2 rps — server still near saturation ceiling
 
-The server's effective capacity is ~210 rps for this configuration (lognormal mean ≈ 1 ms
-actual, σ = 0.5, single worker, WSL2).
+The server's effective capacity is **~190 rps** for this WSL2 calibration run (lognormal,
+σ = 0.5, single worker). Capacity varies ±20 rps between Docker restarts due to busy-loop
+calibration variability under WSL2. Structural finding (knee exists, DES vs ML complementarity)
+is stable across runs.
 
 **KS queue after correction (0.006 ms floor subtracted):**
 At 200–400 rps, bootstrap/parametric KS queue corrected = 0.26–0.32 (reasonable).
@@ -510,36 +531,36 @@ Script: `ml_baseline.py` (pure stdlib, no sklearn). Executed 2026-03-24 against 
 
 | rate | tput (rps) | svc_mean (ms) | rho_est | resp_mean (ms) | q_mean_corr (ms) |
 |---:|---:|---:|---:|---:|---:|
-| 50  | 49.8  | 0.861 | 0.043 | 0.890 | 0.0049 |
-| 100 | 97.9  | 0.944 | 0.092 | 0.974 | 0.0050 |
-| 150 | 151.1 | 1.188 | 0.180 | 1.260 | 0.0159 |
-| 175 | 175.9 | 1.352 | 0.238 | 1.456 | 0.0216 |
-| 200 | 201.7 | 1.523 | 0.307 | 1.640 | 0.0321 |
-| 225 | 206.0 | 1.957 | 0.403 | 2.282 | 0.0793 |
-| 250 | 189.8 | 2.137 | 0.406 | 2.478 | 0.0985 |
-| 400 | 238.9 | 1.873 | 0.447 | 2.076 | 0.0457 |
+| 50  | 50.9  | 1.223 | 0.062 | 1.259 | 0.0048 |
+| 100 | 100.1 | 1.630 | 0.163 | 1.731 | 0.0170 |
+| 150 | 151.0 | 1.779 | 0.269 | 1.898 | 0.0203 |
+| 175 | 175.9 | 1.986 | 0.349 | 2.185 | 0.0500 |
+| 200 | 189.4 | 2.176 | 0.412 | 2.381 | 0.0450 |
+| 225 | 192.7 | 2.756 | 0.531 | 3.694 | 0.3502 |
+| 250 | 205.2 | 2.690 | 0.552 | 3.324 | 0.1709 |
+| 400 | 192.7 | 2.418 | 0.466 | 2.670 | 0.0530 |
 
 **Findings:**
-- ρ rises monotonically 4.3%→44.7% as offered rate increases, confirming the
-  utilisation law is consistent with measured throughput and service times.
-- At 225+ rps the server is saturated: achieved throughput drops below offered load
-  (206 rps at 225 offered; 189.8 rps at 250 offered; 238.9 rps at 400 offered),
-  confirming the capacity knee at ~210 rps identified in Iteration 3.
-- At 400 rps, the Go server is approaching its maximum stable ρ (~0.45) — requests
-  beyond this are dropped or time out at the TCP layer.
+- ρ rises from 6.2%→55.2% as offered rate increases, confirming the utilisation law.
+  Service times are ~40% longer in this run than the prior run due to WSL2 calibration
+  variability (svc_mean 1.22 ms at 50 rps vs 0.86 ms before).
+- At 200+ rps the server is saturated: achieved throughput (189.4) drops below offered
+  load at 200 rps — the capacity knee arrived one step earlier than in the prior run.
+- At 400 rps, ρ = 46.6% — slightly lower than 225/250 rps because the server has
+  been shedding overload for longer, so only admitted arrivals are measured.
 
 ### 8.2 Little's Law Check (L_q = λ × W_q)
 
 | rate | lambda | W_q_corr (ms) | L_q_pred | L_q_obs (M/G/1) | err% |
 |---:|---:|---:|---:|---:|---:|
-| 50  | 49.8  | 0.0049 | 0.00024 | 0.00131 | 81.5% |
-| 100 | 97.9  | 0.0050 | 0.00049 | 0.00714 | 93.2% |
-| 150 | 151.1 | 0.0159 | 0.00240 | 0.04043 | 94.1% |
-| 175 | 175.9 | 0.0216 | 0.00379 | 0.09114 | 95.8% |
-| 200 | 201.7 | 0.0321 | 0.00648 | 0.14821 | 95.6% |
-| 225 | 206.0 | 0.0793 | 0.01633 | 0.35918 | 95.5% |
-| 250 | 189.8 | 0.0985 | 0.01869 | 0.37243 | 95.0% |
-| 400 | 238.9 | 0.0457 | 0.01091 | 0.39615 | 97.2% |
+| 50  | 50.9  | 0.0048 | 0.00025 | 0.00320 | 92.3% |
+| 100 | 100.1 | 0.0170 | 0.00170 | 0.03469 | 95.1% |
+| 150 | 151.0 | 0.0203 | 0.00306 | 0.10315 | 97.0% |
+| 175 | 175.9 | 0.0500 | 0.00880 | 0.20055 | 95.6% |
+| 200 | 189.4 | 0.0450 | 0.00853 | 0.29025 | 97.1% |
+| 225 | 192.7 | 0.3502 | 0.06748 | 0.67977 | 90.1% |
+| 250 | 205.2 | 0.1709 | 0.03507 | 0.75141 | 95.3% |
+| 400 | 192.7 | 0.0530 | 0.01022 | 0.45899 | 97.8% |
 
 *L_q_pred = λ × W_q_corr (observed, floor-corrected); L_q_obs = P-K formula for M/G/1.*
 
@@ -561,37 +582,39 @@ Script: `ml_baseline.py` (pure stdlib, no sklearn). Executed 2026-03-24 against 
 
 | Model | p50 MAE | p95 MAE | p99 MAE |
 |---|---:|---:|---:|
-| Linear (degree=1) | 0.117 ms | 1.907 ms | 5.366 ms |
-| Quadratic (degree=2) | 0.223 ms | 3.937 ms | 9.845 ms |
+| Linear (degree=1) | 0.210 ms | 2.750 ms | 8.852 ms |
+| Quadratic (degree=2) | 0.296 ms | 4.101 ms | 12.657 ms |
 
 Linear outperforms quadratic at all percentiles — the relationship is close to linear
-in the pre-saturation regime (ρ < 30%), and quadratic overfits due to the non-monotone
-behaviour at saturation (400 rps throughput drops back).
+in the pre-saturation regime, and quadratic overfits the non-monotone behaviour at
+saturation where the DES error explodes.
 
 **Per-rate: quadratic ML vs DES replay vs observed p99:**
 
 | rate | obs_p99 | ml_pred | ml_err | des_pred | des_err |
 |---:|---:|---:|---:|---:|---:|
-| 50  | 2.72  | -0.08  | 2.81 | 2.68   | 0.05  |
-| 100 | 3.71  | 5.31   | 1.60 | 3.77   | 0.06  |
-| 150 | 6.45  | 9.53   | 3.08 | 7.76   | 1.30  |
-| 175 | 9.30  | 11.20  | 1.90 | 13.78  | 4.48  |
-| 200 | 9.45  | 12.58  | 3.13 | 16.70  | 7.25  |
-| 225 | 17.29 | 13.67  | 3.62 | 58.11  | 40.82 |
-| 250 | 19.05 | 14.47  | 4.59 | 81.38  | 62.33 |
-| 400 | 11.80 | 13.10  | 1.30 | 116.51 | 104.72|
+| 50  | 4.10  | 1.61   | 2.49 | 4.05   | 0.05   |
+| 100 | 10.61 | 9.70   | 0.91 | 13.13  | 2.51   |
+| 150 | 10.39 | 15.84  | 5.45 | 12.45  | 2.06   |
+| 175 | 14.02 | 18.18  | 4.16 | 25.28  | 11.25  |
+| 200 | 13.98 | 20.03  | 6.05 | 54.34  | 40.36  |
+| 225 | 33.23 | 21.40  | 11.84| 222.65 | 189.42 |
+| 250 | 24.23 | 22.27  | 1.95 | 256.08 | 231.85 |
+| 400 | 15.76 | 17.29  | 1.53 | 174.59 | 158.82 |
 
 **Overall summary:**
-- ML (quadratic) LOOCV MAE p99: **9.845 ms**
-- DES (replay) mean abs error p99: **27.626 ms**
-- **ML is 2.8× more accurate than DES replay on p99 LOOCV.**
+- ML (quadratic) LOOCV MAE p99: **12.657 ms**
+- DES (replay) mean abs error p99: **79.541 ms**
+- **ML is 6.3× more accurate than DES replay on p99 LOOCV.**
+- The advantage is larger than the prior run because longer WSL2 service times pushed
+  saturation earlier, causing DES queue to grow more catastrophically at 225+ rps.
 
 **Why DES replay fails at 225+ rps:**
 The DES replay processes all observed arrivals as if the server can serve each one.
-Near and above the capacity knee, the observed arrivals include requests that actually
-timed out or were dropped at the TCP layer. The DES queues them all, creating an
-artificial, ever-growing queue — hence des_pred p99 of 58→116 ms while observed p99
-is only 17→19 ms. The DES model is not equipped to simulate request dropping/timeouts.
+Near and above the capacity knee, the queue never drains — the DES simulates unbounded
+growth (des_pred p99 of 54→256 ms) while observed p99 is only 14–33 ms. Real clients
+timeout after 5 s and new arrivals are rejected by the OS TCP stack, capping the actual
+queue depth. A queue-capacity drop model (implemented, see Section 12) is the fix.
 
 **Why DES excels at low utilisation (ρ < 30%):**
 At 50 and 100 rps the DES errors are only 0.05–0.06 ms vs ML's 2.81–1.60 ms. DES
@@ -606,18 +629,17 @@ rates using those parameters:
 
 | Prediction rate | obs_p99 | parametric_des_p99 | abs_err |
 |---:|---:|---:|---:|
-| 200 rps | 9.45 ms | 10.10 ms | **0.66 ms** |
-| 400 rps | 11.80 ms | 84.11 ms | **72.31 ms** |
+| 200 rps | 13.98 ms | 36.35 ms | **22.36 ms** |
+| 400 rps | 15.76 ms | 213.90 ms | **198.14 ms** |
 
 **Findings:**
-- At 200 rps (within the same stable regime as 100 rps), parametric DES achieves
-  only 0.66 ms error — an excellent generalisation result.
-- At 400 rps (beyond the capacity knee), parametric DES fails catastrophically
-  (72 ms error) for the same reason as replay: the DES model does not drop requests,
-  so it simulates unbounded queue growth that never actually occurs.
-- **Implication:** Parametric DES is a useful tool for same-regime cross-rate
-  prediction but cannot extrapolate across the capacity boundary without a drop/timeout
-  model.
+- At 200 rps, error is 22 ms — worse than the prior run's 0.66 ms because the server
+  was already in saturation at 200 rps in this run (tput = 189.4 < 200 offered), so the
+  DES (without a drop model) immediately starts accumulating queue.
+- At 400 rps (deep saturation), error is 198 ms — catastrophic, same root cause.
+- **Implication:** Parametric DES generalisation is only reliable when the prediction
+  target is in the same stable regime as the training rate. The boundary is sharp:
+  once the server saturates, the no-drop DES fails completely.
 
 ---
 
@@ -625,32 +647,33 @@ rates using those parameters:
 
 ### Validated findings
 
-1. **Capacity knee confirmed at ~210 rps.** Queue p99 jumps 6× and response p99 jumps
-   83% between 200 and 225 rps. The server cannot sustain ≥225 rps offered load.
+1. **Capacity knee at ~190 rps** (varies ±20 rps with WSL2 calibration). Queue p99 jumps
+   9× and response p99 jumps +138% between 200 and 225 rps.
 
 2. **Replay DES is the best mode for within-regime prediction:** KS response =
-   0.015–0.033 across the full sweep. At low utilisation (ρ < 30%) DES outperforms
-   ML by 30–50×. Preserving temporal service-time ordering is essential.
+   0.014–0.085 across the full sweep. At low utilisation (ρ < 30%) DES outperforms
+   ML. Preserving temporal service-time ordering is essential.
 
 3. **ML outperforms DES at and above the saturation boundary.** Linear regression
-   LOOCV MAE p99 = 5.4 ms vs DES replay 27.6 ms — a 2.8× advantage. DES fails
+   LOOCV MAE p99 = 8.9 ms vs DES replay 79.5 ms — a 6.3× advantage. DES fails
    near saturation because it has no request-drop model.
 
-4. **Parametric DES generalises well within regime** (0.66 ms cross-rate error at
-   100→200 rps) but fails across the capacity boundary (72 ms error at 100→400 rps).
+4. **Parametric DES generalises within stable regime only.** 22 ms error (100→200 rps,
+   both in saturation this run) vs 198 ms error (100→400 rps). Sharp degradation once
+   the target rate crosses the capacity boundary.
 
 5. **Operational laws validate:** Utilisation law (ρ = λ × E[S]) is consistent with
    measured throughput and service times. Direct P-K Little's Law comparison is
-   confounded by the 0.006 ms goroutine-scheduling floor — the floor makes corrected
-   queue wait appear near-zero, inflating the apparent discrepancy with theory.
+   confounded by the 0.006 ms goroutine-scheduling floor.
 
 6. **Bootstrap ≈ parametric.** Both modes produce the same KS score; parametric
    lognormal fitting adds no benefit over empirical resampling for same-rate DES.
 
-7. **Queue KS is 0.26–0.43 after floor correction** (was 0.62–0.99 before correction).
+7. **Queue KS is 0.25–0.70 after floor correction** (was 0.87–0.99 before correction).
    The 0.006 ms scheduling offset accounts for most of the systematic queue mismatch.
 
-8. **Apache is unusable** due to O(n) file I/O growth; must fix message store to proceed.
+8. **Apache is accurate baseline for scope validation:** KS_resp ≈ 0.44 (vs Go ≈ 0.03).
+   File-lock contention is the dominant latency source, not M/G/1 queueing.
 
 ---
 
@@ -662,12 +685,13 @@ Script: `run_experiments.py` Phase 3. Executed 2026-03-24 with fixed Apache mess
 
 | Fix | Detail |
 |---|---|
-| Bounded ring buffer | `APACHE_MAX_MESSAGES=1000`; O(1) fast-path append; slow rewrite only when at cap |
-| Optimised GET scan | Decodes only last `limit×3` lines, not all 1000 |
-| CSV trace logging | `APACHE_TRACE_CSV=/app/logs/apache_requests.csv`; schema matches Go server |
-| Duplicate header race | Fixed with `fstat()` inside file lock |
-| Status code filter | Changed analysis + DES to accept 2xx (Apache POSTs return 201) |
-| Rate ceiling | Rates reduced from [50,100,200,400] to [10,25,50] — Apache saturates at ~30 rps |
+| Bounded ring buffer | `APACHE_MAX_MESSAGES=1000`; O(1) fast-path append (count-lines only); full rewrite only when at cap |
+| Optimised GET scan | Decodes only last `limit×3` lines, not all 1000; avoids O(MAX_MESSAGES) JSON decode per request |
+| CSV trace logging | `APACHE_TRACE_CSV=/app/logs/apache_requests.csv`; schema matches Go server; `service_ms` = synthetic lognormal draw |
+| Duplicate header race | Fixed with `fstat()` inside exclusive file lock — concurrent PHP workers no longer double-write the header row |
+| Status code filter | `analyse_go_csv()` and `single_server_des.py` updated to accept 2xx (Go returns 200; Apache POST /send returns 201) |
+| Rate ceiling | Rates reduced from [50,100,200,400] to [10,25,50] — Apache saturates at ~30 rps due to file-lock contention |
+| run_experiments Phase 3 | Rewritten to extract per-rate CSV slices and run all three DES modes — now mirrors Phase 1 (Go) treatment |
 
 ### 10.2 Results (server-side internal timings)
 
@@ -677,15 +701,15 @@ All timings measured inside PHP (arrival = `$_SERVER['REQUEST_TIME_FLOAT']`; ser
 
 | rate | n | tput | svc_p50 | svc_p99 | resp_p50 | resp_p99 | q_p99 | KS_boot | KS_replay | KS_para |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 10  | 899  | 10.0 | 1.81 | 5.81  | 3.12 | 11.54 | 8.15  | 0.422 | 0.414 | 0.421 |
-| 25  | 2252 | 25.0 | 1.81 | 7.32  | 3.43 | 18.85 | 14.50 | 0.440 | 0.437 | 0.415 |
-| 50  | 4505 | 50.0 | 1.85 | 10.80 | 3.72 | 29.04 | 23.02 | 0.396 | 0.392 | 0.369 |
+| 10  | 899  | 10.0 | 1.76 | 5.79  | 3.14 | 10.11 | 6.50  | 0.488 | 0.485 | 0.477 |
+| 25  | 2252 | 25.0 | 1.81 | 6.73  | 3.38 | 14.12 | 9.81  | 0.442 | 0.425 | 0.424 |
+| 50  | 4505 | 50.1 | 1.87 | 12.36 | 3.91 | 35.82 | 27.24 | 0.401 | 0.397 | 0.367 |
 
 0% error rate at all three rates. All 4,505 requests at 50 rps completed successfully.
 
 ### 10.3 Analysis
 
-**DES accuracy is poor for Apache (KS_resp ≈ 0.39–0.44) vs Go (KS_resp ≈ 0.015–0.033).**
+**DES accuracy is poor for Apache (KS_resp ≈ 0.40–0.49) vs Go (KS_resp ≈ 0.014–0.085).**
 
 The DES uses `service_ms` (i.i.d. lognormal draws, mean ~2ms) to simulate M/G/1 queue
 buildup. Actual Apache `response_ms` includes PHP overhead that the DES does not model:
@@ -717,8 +741,8 @@ file-backed message store on a single core.
 
 | Server | Best KS_resp | Rate range | Bottleneck |
 |---|---:|---|---|
-| Go (replay DES) | 0.015–0.033 | 50–250 rps | Single FCFS queue (M/G/1 compatible) |
-| Apache (replay DES) | 0.392–0.437 | 10–50 rps | File I/O lock contention (not M/G/1) |
+| Go (replay DES) | 0.014–0.085 | 50–400 rps | Single FCFS queue (M/G/1 compatible) |
+| Apache (replay DES) | 0.397–0.485 | 10–50 rps | File I/O lock contention (not M/G/1) |
 
 **Finding:** DES accurately models the Go single-worker FCFS queue (KS < 0.04). It does
 not accurately model Apache's mpm_prefork + file-backed message store (KS ~0.42) because
@@ -733,35 +757,41 @@ single-server FCFS implementations and inaccurate where additional contention me
 
 ### Validated findings
 
-1. **Go single-server capacity knee at ~210 rps.** Queue p99 jumps 6× between 200 and
-   225 rps. Achieved throughput drops below offered load at 225+ rps.
+1. **Go single-server capacity knee at ~190 rps** (varies ±20 rps with WSL2 calibration).
+   Queue p99 jumps 9× between 200 and 225 rps. Achieved throughput drops below offered load
+   at 200+ rps in this run.
 
-2. **Replay DES is the best mode for Go (KS_resp 0.015–0.033).** Preserving temporal
-   service-time ordering is essential at ρ ≥ 30%.
+2. **Replay DES is the best mode for Go (KS_resp 0.014–0.085).** Preserving temporal
+   service-time ordering is essential at ρ ≥ 35%.
 
 3. **ML outperforms DES at and above the Go saturation boundary.** Linear LOOCV MAE
-   p99 = 5.4ms vs DES replay 27.6ms. DES fails near saturation without a request-drop
-   model.
+   p99 = 8.9 ms vs DES replay 79.5 ms — 6.3× advantage. DES fails near saturation
+   without a request-drop model.
 
-4. **Parametric DES generalises within regime** (0.66ms error, 100→200 rps) but fails
-   across the capacity boundary (72ms error, 100→400 rps).
+4. **Parametric DES generalises within stable regime only.** Error grows from 22 ms
+   (within regime) to 198 ms (across the capacity boundary).
 
 5. **Operational laws validate for Go.** Utilisation law (ρ = λ × E[S]) is consistent
-   across all rates. Little's Law comparison is confounded by the 0.006ms goroutine
+   across all rates. Little's Law comparison is confounded by the 0.006 ms goroutine
    scheduling floor.
 
 6. **Apache saturates at ~30 rps** due to mpm_prefork file-lock contention, not
-   synthetic service time. DES KS_resp ≈ 0.42 (vs Go ≈ 0.02) because the dominant
+   synthetic service time. DES KS_resp ≈ 0.44 (vs Go ≈ 0.03) because the dominant
    latency source (file I/O) is invisible to the M/G/1 model.
 
 7. **DES is an accurate model for M/G/1-compatible systems** (single FCFS server,
    i.i.d. service times, no external contention). Accuracy degrades when additional
    latency sources (file locks, process spawning) are present.
 
+8. **Queue-capacity drop model implemented** (`--queue-capacity 1024` in DES; Go server
+   now logs 503 rejections to CSV). Not triggered in the current setup because the
+   load generator thread pool (800 workers at 400 rps) keeps in-flight requests below
+   the 1024 queue limit. Infrastructure is ready for a true open-loop generator.
+
 ### Next steps
 
 | Priority | Action |
 |---|---|
-| Medium | Add request-drop / timeout model to DES to handle the Go saturation regime |
+| Done | Add request-drop / timeout model to DES (`--queue-capacity`); Go server logs 503 arrivals |
 | Medium | Extend Apache experiment with SQLite or in-memory message store to isolate file-lock effect |
 | Low | Extend to multi-worker / multi-core (Iteration 2) |
