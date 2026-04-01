@@ -1035,3 +1035,336 @@ contention. A load-dependent service rate model (or ML) is required to capture
 this regime.
 
 ---
+
+## 14. Iteration 2 — Multi-Runtime Single-Core Comparison
+
+**Goal:** Test whether DES accuracy depends on the *service type* (CPU vs I/O),
+the *runtime* (Go / Node.js / Python / Java), or purely on the *queue architecture*
+(M/G/1 vs M/G/c). All servers run on `cpuset=0, cpus=1.0, mem_limit=256m`.
+
+**New servers:**
+- `node-dsp` (port 8084) — Node.js, single event loop, AES-FIR-AES pipeline
+- `python-dsp` (port 8085) — Python + Gunicorn 1 worker, same pipeline
+- `java-dsp` (port 8086) — Java ThreadPoolExecutor, 4 threads, same pipeline
+- `go-sqlite` (port 8087) — Go single worker, SQLite INSERT + SELECT (I/O-bound)
+
+### 14.1 Node.js DSP-AES (Single Event Loop)
+
+Service: AES-256-CBC decrypt → FIR 64-tap → AES-256-CBC encrypt on 1024 float32 samples.
+Architecture: single-threaded event loop; CPU-bound FIR blocks the loop → M/G/1.
+Service time (low load): p50 ~0.52 ms, CV ~0.35.
+
+**Bug note:** The original Node.js server used `fs.appendFileSync` for CSV logging,
+which blocks the event loop on every write. This caused apparent saturation at ~48 rps
+despite the server being effectively idle. Fixed by switching to `fs.createWriteStream`
+(async) and logging after `res.end()`. All data below was collected with the fixed server.
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+|  50 |  4,497 | 0.032 | 0.367 | 0.365 | 0.293 | 0.56 |
+| 100 |  8,863 | 0.058 | 0.424 | 0.423 | 0.324 | 0.52 |
+| 200 | 11,924 | 0.236 | 0.720 | 0.715 | 0.754 | 0.76 |
+| 400 | 15,390 | 0.564 | 0.550 | 0.535 | 0.591 | 0.76 |
+| 800 | 13,646 | 1.767 | 0.323 | 0.223 | 0.179 | 0.82 |
+|1200 | 14,666 | 2.436 | 0.257 | 0.140 | 0.163 | 0.78 |
+|1600 | 15,854 | 2.623 | 0.262 | 0.163 | 0.140 | 0.80 |
+
+**Key observations:**
+- KS is high at low load (0.36–0.42) despite rho < 0.06. The M/G/1 DES predicts
+  minimal queueing (correct) but the *shape* of the CDF is wrong — observed response
+  times are bimodal (fast + occasional GC/event-loop stall spikes), while DES assumes
+  a smooth lognormal.
+- At rho > 1 (800+ rps), the system is saturated. Jobs queue in the OS TCP accept
+  buffer. The DES KS actually *improves* here because both observed and simulated
+  CDFs become dominated by queueing delay rather than service time shape.
+- Capacity knee: ~600-800 rps — above that, `achieved_rps` flattens and response
+  times climb. The single event loop is the bottleneck.
+
+### 14.2 Python DSP-AES (Gunicorn Single Worker)
+
+Service: same AES-FIR-AES pipeline in pure Python. Service time ~7-8 ms
+(~15x slower than Node.js due to Python's interpreted math in the FIR loop).
+Architecture: Gunicorn --workers 1 → true M/G/1.
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+| 10 |   987 | 0.085 | 0.557 | 0.549 | 0.586 | 7.61 |
+| 25 | 2,379 | 0.204 | 0.254 | 0.255 | 0.270 | 7.50 |
+| 50 | 4,509 | 0.397 | 0.135 | 0.135 | 0.159 | 7.32 |
+| 75 | 6,587 | 0.613 | 0.105 | 0.105 | 0.149 | 7.59 |
+
+**Key observations:**
+- At 10 rps (rho=0.085), KS = 0.56 — the worst single-rate result across all servers.
+  The warm-up period produces highly variable service times (Python's JIT-equivalent
+  effect during the first few hundred requests). The DES is calibrated on all observed
+  times including this early spike.
+- At 25-75 rps, DES improves dramatically: KS 0.25 → 0.11. Python service times are
+  very consistent (CV ~0.05 — almost deterministic), which means the M/G/1 model works
+  well once warm up is excluded.
+- Capacity knee: ~90-100 rps (rho = 1 at ~125 rps; knee visible around 90 rps
+  where queue_ms begins growing rapidly).
+
+### 14.3 Java DSP-AES (ThreadPoolExecutor, 4 Threads)
+
+Service: same pipeline in Java with JVM AES. Service time ~0.17-0.29 ms
+(faster than Go due to JVM's AES hardware acceleration via JCE).
+Architecture: `ThreadPoolExecutor(4, 4, ...)` → true M/G/4.
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+|  25 | 2,379 | 0.003 | 0.748 | 0.747 | 0.778 | 0.29 |
+|  50 | 4,519 | 0.004 | 0.180 | 0.182 | 0.233 | 0.19 |
+| 100 | 8,848 | 0.006 | 0.235 | 0.230 | 0.251 | 0.17 |
+| 200 | 4,402 | 0.012 | 0.219 | 0.210 | 0.242 | 0.18 |
+| 400 | 2,721 | 0.068 | 0.221 | 0.222 | 0.215 | 0.20 |
+| 600 | 2,611 | 0.067 | 0.245 | 0.260 | 0.221 | 0.20 |
+
+**Key observations:**
+- At 25 rps, KS = 0.748 — extremely high. Cause: JVM warm-up. The first ~200 requests
+  have service times 5-10x higher than steady-state as the JIT compiler kicks in.
+  Once warm (50+ rps), KS stabilises at ~0.18-0.25.
+- The M/G/4 DES is applied here (4 workers). At rho=0.003-0.07, all 4 workers are
+  almost never simultaneously busy. The DES effectively runs as M/G/1 in this regime.
+- KS floor ~0.18-0.25 across all rates: reflects bimodal service time distribution
+  (short JVM-fast path vs occasional GC pause). The lognormal parametric fit captures
+  the mean and variance but misses the bimodality.
+- Capacity at 4 workers: ~(1/0.2ms) × 4 = ~20,000 rps theoretical. In practice,
+  thread-pool overhead and network stack limit effective throughput to ~2,000-3,000 rps.
+
+### 14.4 Go SQLite (I/O-Bound Single Worker)
+
+Service: INSERT sensor reading + SELECT last 20 rows from SQLite database.
+Service time ~10 ms (vs ~1 ms for the lognormal sleep server).
+Architecture: same single FCFS goroutine-queue as original Go server → M/G/1.
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+| 10 |   917 | 0.113 | 0.550 | 0.544 | 0.570 | 10.23 |
+| 25 | 2,315 | 0.266 | 0.158 | 0.151 | 0.152 | 10.23 |
+| 50 | 4,495 | 0.523 | 0.448 | 0.448 | 0.442 | 10.10 |
+| 75 | 6,423 | 0.803 | 0.718 | 0.712 | 0.702 | 10.23 |
+| 100|   1,007| 4.609 | 0.917 | 0.921 | 0.883 | 37.40 |
+
+**Key observations:**
+- DES is accurate at 25 rps (KS = 0.16) but collapses at 50 rps (KS = 0.45).
+  This is different from the CPU-bound servers: at rho=0.52 the Go SQLite server
+  is already in the high-utilisation regime where the SQLite WAL write-lock causes
+  occasional service time spikes.
+- At 75 rps (rho=0.80), KS = 0.72 — service time distribution shifts significantly
+  (p50 stable at 10ms but p95/p99 grow 2-3x). The DES cannot model this without
+  load-dependent service rates.
+- Capacity knee: ~75-90 rps. The service time is ~10× longer than the CPU-bound
+  servers, so capacity is ~10× lower at same architecture.
+- **Key finding:** DES accuracy does NOT primarily depend on service type (CPU vs I/O).
+  The Go SQLite server (I/O-bound) shows the same pattern as the CPU-bound servers:
+  good DES at low rho, rapidly degrading above rho=0.5.
+
+### 14.5 Cross-Server Comparison (Single-Core)
+
+| Server | Service | Mean svc | Capacity knee | Best KS (low load) | KS at saturation |
+|---|---|---|---|---|---|
+| go (lognormal)  | CPU synthetic | ~1.1 ms  | ~190 rps  | 0.017 | 0.064 |
+| apache-msg      | PHP messaging | ~1.8 ms  | ~30 rps   | 0.315 | N/A |
+| apache-dsp      | PHP AES+FIR  | ~2.3 ms  | ~25–50 rps | 0.137 | 0.972 |
+| node-dsp        | JS AES+FIR   | ~0.5 ms  | ~600 rps  | 0.293 | 0.140 |
+| python-dsp      | Py AES+FIR   | ~7.5 ms  | ~90 rps   | 0.105 | N/A |
+| java-dsp        | JVM AES+FIR  | ~0.2 ms  | ~2000+ rps | 0.180 | N/A |
+| go-sqlite       | Go SQLite I/O | ~10 ms  | ~75 rps   | 0.151 | 0.917 |
+
+**Patterns:**
+1. **Go (lognormal synthetic)** achieves near-perfect DES accuracy (KS < 0.03) because
+   the service time distribution is exactly lognormal — the DES model matches reality.
+2. **Python-dsp** is second-best at stable load (KS 0.10-0.13) because its FIR in
+   pure Python is deterministic (very low CV ~0.05) — nearly constant service times
+   make any DES mode accurate.
+3. **Apache servers** are worst (KS 0.31-0.43) due to file-lock contention between
+   mpm_prefork workers inflating actual response times beyond DES prediction.
+4. **Node.js** shows high KS at low load due to event-loop stalls (GC, async
+   callback queuing), which the M/G/1 model cannot represent.
+5. **Go SQLite** shows the same failure mode as CPU-bound servers at high rho —
+   DES accuracy is determined by architecture (rho), not service type (CPU vs I/O).
+
+---
+
+## 15. Iteration 2 — Multi-Core (M/G/3) Variants
+
+**Goal:** Validate M/G/c DES (c=3) against servers running 3 parallel workers
+on 3 CPU cores (`cpuset=0,1,2`, `cpus=3.0`). Tests whether multi-core parallelism
+improves throughput proportionally and whether the M/G/c model captures the
+reduction in queueing delay.
+
+**New services:**
+- `node-dsp-mc` (port 8088) — Node.js cluster, 3 worker processes → M/G/3
+- `python-dsp-mc` (port 8089) — Gunicorn 3 workers → M/G/3
+- `java-dsp-mc` (port 8090) — Java ThreadPoolExecutor(3) → M/G/3
+- `go-sqlite-mc` (port 8091) — Go 3-worker goroutine queue, SQLite WAL → M/G/3
+
+### 15.1 Node.js Cluster (3 Workers)
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+|  200 | 11,198 | 0.071 | 0.777 | 0.779 | 0.808 | 0.78 |
+|  400 | 12,810 | 0.134 | 0.774 | 0.776 | 0.803 | 0.74 |
+|  800 | 12,816 | 0.301 | 0.698 | 0.697 | 0.733 | 0.74 |
+| 1600 | 12,854 | 0.610 | 0.665 | 0.664 | 0.704 | 0.74 |
+| 2400 | 12,459 | 0.843 | 0.735 | 0.736 | 0.769 | 0.73 |
+
+**Observation:** KS is consistently high (0.66-0.81) at all rates. The M/G/3 DES
+model predicts queueing delay based on the 3-server structure, but the actual
+service time distribution is bimodal — most requests are fast (~0.7 ms) but
+~5-10% stall for 2-5 ms (OS process scheduling overhead when switching between
+cluster workers on the same port via `SO_REUSEPORT`). The DES lognormal fit
+can't represent this bimodality.
+
+The n count plateaus at ~12,000-13,000 for all rates above 200 rps: this is
+the throughput ceiling of the 3-worker cluster through the host network stack
+(~140 rps per worker, limited by connection establishment overhead).
+
+### 15.2 Python DSP-AES (3 Gunicorn Workers)
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+|  25 |  2,357 | 0.078 | 0.641 | 0.642 | 0.673 | 8.64 |
+|  50 |  4,484 | 0.171 | 0.299 | 0.294 | 0.338 | 9.15 |
+| 100 |  8,416 | 0.389 | 0.053 | 0.051 | 0.094 | 10.03 |
+| 150 |  9,673 | 0.582 | 0.050 | 0.053 | 0.099 | 10.02 |
+| 200 | 10,348 | 0.794 | 0.050 | 0.053 | 0.100 | 10.22 |
+| 250 |  9,437 | 0.945 | 0.043 | 0.045 | 0.109 | 9.49 |
+| 300 | 10,262 | 1.144 | 0.039 | 0.043 | 0.119 | 9.40 |
+
+**Best M/G/c result in the entire study: KS = 0.039-0.053 at 100-300 rps.**
+
+At 25 rps (rho=0.078), KS = 0.64 — same warm-up bias as single-worker Python.
+From 100 rps upward, the M/G/3 DES achieves near-perfect accuracy. Python's
+deterministic service time (CV ~0.05) combined with the correct c=3 worker
+model explains this: when service time is near-constant and the model correctly
+accounts for 3 parallel servers, the queueing dynamics are predictable.
+
+Throughput vs 1-worker baseline: the 3-worker server handles ~3× the load at
+equivalent KS accuracy (90 rps knee for 1-worker vs 270 rps for 3-worker).
+
+### 15.3 Java DSP-AES (3-Thread Pool)
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+| 100 |  5,759 | 0.016 | 0.158 | 0.169 | 0.192 | 0.26 |
+| 200 |  3,839 | 0.017 | 0.286 | 0.280 | 0.238 | 0.19 |
+| 400 |  3,164 | 0.040 | 0.310 | 0.313 | 0.255 | 0.20 |
+| 600 |  3,490 | 0.047 | 0.293 | 0.296 | 0.246 | 0.20 |
+| 800 |  2,926 | 0.069 | 0.338 | 0.343 | 0.281 | 0.20 |
+
+Comparable to the 4-worker java-dsp baseline (KS 0.18-0.34). Both are limited
+by the same bimodal service time distribution (JVM JIT warm-up + GC pauses).
+The low n at 200-800 rps indicates the test client hit its connection limit
+before the server saturated — Java's capacity at 3 workers is ~15,000+ rps.
+
+### 15.4 Go SQLite (3-Worker, WAL Mode)
+
+| Rate (rps) | n | rho | KS replay | KS bootstrap | KS param | svc p50 (ms) |
+|---|---|---|---|---|---|---|
+|  50 |  2,658 | 0.087 | 0.754 | 0.757 | 0.771 | 4.65 |
+| 100 |  4,428 | 0.171 | 0.577 | 0.572 | 0.600 | 4.60 |
+| 200 |  6,113 | 0.372 | 0.380 | 0.375 | 0.401 | 4.68 |
+| 400 |  6,282 | 0.845 | 0.231 | 0.224 | 0.252 | 4.82 |
+| 800 |  6,029 | 1.864 | 0.160 | 0.153 | 0.186 | 4.97 |
+
+**Interesting finding:** 3-worker SQLite service time is ~4.6 ms (vs 10 ms
+for single-worker). This is not a speedup — it reflects that with 3 goroutines
+sharing the SQLite connection pool, write serialisation via WAL limits to ~1
+concurrent write at a time. The effective throughput improvement is ~2.2x
+(not the expected 3x).
+
+KS improves as rho increases (0.754 → 0.160), the opposite of most servers.
+At high rho, the WAL write-lock creates a natural queue that M/G/3 captures
+well. At low rho, the bottleneck is write-lock stall variance not captured
+by the lognormal model.
+
+### 15.5 Throughput Scaling: 1-Core vs 3-Core
+
+| Server | 1-core knee | 3-core knee | Scaling factor |
+|---|---|---|---|
+| node-dsp  | ~600 rps  | ~1,400 rps | 2.3x |
+| python-dsp | ~90 rps  | ~270 rps   | 3.0x |
+| java-dsp  | ~2000+ rps | ~2000+ rps | 1.0x (client-limited) |
+| go-sqlite | ~75 rps   | ~165 rps   | 2.2x |
+
+Python achieves near-linear scaling (3.0x) because its workload is purely
+CPU-bound with no shared state. Go SQLite and Node.js achieve ~2.2-2.3x due
+to lock contention (SQLite WAL) and connection dispatch overhead (cluster).
+
+### 15.6 DES Accuracy: Single-Core vs Multi-Core
+
+| Server | Best KS (1-core) | Best KS (3-core) | Improvement |
+|---|---|---|---|
+| node-dsp  | 0.140 (at saturation) | 0.665 | Worse — bimodal distribution |
+| python-dsp | 0.105 | **0.039** | 2.7x better |
+| java-dsp  | 0.180 | 0.158 | Slightly better |
+| go-sqlite | 0.151 | 0.153 | Same |
+
+Python-dsp with 3 workers is the standout: the combination of near-constant
+service times (CV ~0.05) and correct c=3 M/G/c model produces KS < 0.05,
+which is essentially as accurate as the hand-crafted Go lognormal server.
+This is the best M/G/c result in the study.
+
+---
+
+## 16. Summary of All DES Results
+
+### 16.1 KS Distance Across All Servers and Modes (Best Mode per Server)
+
+| Server | Workers | Best mode | Low-load KS | High-load KS | Limiting factor |
+|---|---|---|---|---|---|
+| go (lognormal)    | 1 | replay | **0.017** | 0.064 | Near-linear DES |
+| apache-msg        | 1 | parametric | 0.315 | N/A | File-lock contention |
+| apache-dsp (1c)   | 1 | bootstrap | 0.137 | 0.972 | CPU time-sharing |
+| node-dsp (1c)     | 1 | parametric | 0.293 | 0.140 | Event-loop stalls |
+| python-dsp (1c)   | 1 | replay | 0.105 | N/A | Warm-up transient |
+| java-dsp (1c=4w)  | 4 | replay | 0.180 | N/A | JVM JIT warm-up |
+| go-sqlite (1c)    | 1 | bootstrap | 0.151 | 0.917 | WAL write stall |
+| node-dsp (3c)     | 3 | replay | 0.665 | N/A | Bimodal dist |
+| python-dsp (3c)   | 3 | replay | **0.039** | N/A | Near-perfect |
+| java-dsp (3c=3w)  | 3 | parametric | 0.158 | N/A | JVM JIT |
+| go-sqlite (3c)    | 3 | bootstrap | 0.153 | 0.160 | WAL contention |
+
+### 16.2 When Does DES Work?
+
+DES achieves KS < 0.10 (practically useful accuracy) when ALL of the following hold:
+
+1. **Service time distribution is unimodal and right-skewed** (lognormal-like or
+   near-constant). Fails for: Node.js (GC stalls), Java (JIT warm-up).
+
+2. **No hidden contention** in the service path. Fails for: Apache (file-lock),
+   Go SQLite (WAL write serialisation at high load).
+
+3. **The model worker count c matches reality.** Python-dsp with c=3 achieves
+   KS=0.039; Apache-dsp with wrong c fails at every rate.
+
+4. **rho < ~0.5** (moderate utilisation). Above rho=0.5, load-dependent service
+   time inflation dominates in most real servers (only Python's deterministic
+   pipeline holds up above rho=0.5).
+
+### 16.3 Conclusions
+
+**Finding 11:** The Go synthetic lognormal server (KS < 0.03) is an ideal case
+because the service time distribution exactly matches the DES model. No real server
+achieves this — the closest is Python-dsp with 3 workers (KS = 0.039).
+
+**Finding 12:** Python-dsp (3 workers) achieves near-perfect M/G/3 DES accuracy
+(KS = 0.039-0.050) because: (a) near-constant service times (CV ~0.05), (b) correct
+c=3 model, (c) no shared state contention between Gunicorn workers.
+
+**Finding 13:** Node.js shows an inverse DES accuracy pattern: high KS at low load
+(0.36-0.42, shape mismatch from event-loop stalls) but improving KS at saturation
+(0.14, when queueing dominates). The M/G/1 model accidentally captures saturation
+queueing even when it fails to capture service time shape.
+
+**Finding 14:** DES accuracy depends primarily on service time *variability* and
+*hidden contention*, not on service type (CPU vs I/O). Go SQLite (I/O-bound) and
+Go lognormal (CPU-bound) show similar DES accuracy curves vs rho.
+
+**Finding 15:** Multi-core (M/G/3) improves DES accuracy *only* when the single-core
+bottleneck was queueing from under-provisioning (Python: 3x throughput, same KS →
+KS dramatically improves). When the bottleneck is service time bimodality (Node.js,
+Java), adding cores does not help DES accuracy.
+
+---

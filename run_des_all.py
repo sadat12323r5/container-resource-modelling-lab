@@ -79,12 +79,29 @@ def ks_distance(a, b):
 
 
 def read_response_ms(path):
+    """Read response times from a trace or DES-simulated CSV.
+    Handles two formats:
+      - Observed trace:  columns include 'response_ms', 'status_code'
+      - DES output:      columns include 'sim_response_ms', 'sim_status'
+      - Go trace (old):  columns include 'response_ms', 'status_code' (wide format)
+    """
     rows = []
     try:
         with open(path, newline='') as f:
-            for row in csv.DictReader(f):
-                if row.get('status_code', '200') == '200':
-                    rows.append(float(row['response_ms']))
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Determine status column
+                status = row.get('status_code') or row.get('sim_status', '200')
+                if status != '200':
+                    continue
+                # Determine response time column
+                val_str = row.get('response_ms') or row.get('sim_response_ms')
+                if val_str is None:
+                    continue
+                try:
+                    rows.append(float(val_str))
+                except ValueError:
+                    pass
     except Exception as e:
         print(f"    [WARN] could not read {path}: {e}")
     return sorted(rows)
