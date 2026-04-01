@@ -2,12 +2,12 @@
 run_sweeps.py — Orchestrates all server sweeps for the capacity thesis.
 
 Runs each (server, rate) pair sequentially:
-  1. Clears the live CSV log for that server.
+  1. Clears the live CSV log for that server (written by the container).
   2. Runs the appropriate load generator for DURATION seconds.
-  3. Copies the result to experiments/<server>_<rate>rps.csv.
+  3. Copies the result directly into experiments/<server_folder>/.
 
 Usage:
-  python run_sweeps.py [--servers node go_sqlite java_mc ...]
+  python run_sweeps.py [--servers node_dsp go_sqlite ...]
   python run_sweeps.py          # runs all pending sweeps
 """
 import argparse
@@ -20,10 +20,9 @@ import time
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BASE      = os.path.dirname(os.path.abspath(__file__))
-LOGS_DIR  = os.path.join(BASE, "logs and des")
-EXP_DIR   = os.path.join(LOGS_DIR, "experiments")
-os.makedirs(EXP_DIR, exist_ok=True)
+BASE     = os.path.dirname(os.path.abspath(__file__))
+LOGS_DIR = os.path.join(BASE, "logs and des")
+EXP_BASE = os.path.join(BASE, "experiments")
 
 DSP_LOAD   = os.path.join(BASE, "dsp_aes_load.py")
 SQLITE_LOAD = os.path.join(BASE, "sqlite_load.py")
@@ -35,44 +34,49 @@ TIMEOUT  = DURATION + 60  # subprocess timeout
 # ---------------------------------------------------------------------------
 # Server definitions
 # ---------------------------------------------------------------------------
-# Each entry: (tag, live_csv_name, url, load_script_args_fn)
+# Each entry: (exp_folder, file_tag, live_csv, url, kind)
+#   exp_folder  — subdirectory under experiments/
+#   file_tag    — prefix for trace files (e.g. "node_dsp" -> node_dsp_200rps.csv)
+#   live_csv    — path that the container writes to (bind-mounted from logs and des/)
+#   url         — load generator target
+#   kind        — "dsp" or "sqlite"
 SERVERS = {
     # Single-core servers
     "node_dsp": (
+        "node_dsp_1c", "node_dsp",
         os.path.join(LOGS_DIR, "node_dsp_requests.csv"),
-        "http://localhost:8084/process",
-        "dsp",
+        "http://localhost:8084/process", "dsp",
     ),
     "go_sqlite": (
+        "go_sqlite_1c", "go_sqlite",
         os.path.join(LOGS_DIR, "go_sqlite_requests.csv"),
-        "http://localhost:8087/process",
-        "sqlite",
+        "http://localhost:8087/process", "sqlite",
     ),
     "java_dsp": (
+        "java_dsp_1c", "java_dsp",
         os.path.join(LOGS_DIR, "java_dsp_requests.csv"),
-        "http://localhost:8086/process",
-        "dsp",
+        "http://localhost:8086/process", "dsp",
     ),
     # Multi-core servers (c=3)
     "node_dsp_mc": (
+        "node_dsp_3c", "node_dsp_mc",
         os.path.join(LOGS_DIR, "node_dsp_mc_requests.csv"),
-        "http://localhost:8088/process",
-        "dsp",
+        "http://localhost:8088/process", "dsp",
     ),
     "python_dsp_mc": (
+        "python_dsp_3c", "python_dsp_mc",
         os.path.join(LOGS_DIR, "python_dsp_mc_requests.csv"),
-        "http://localhost:8089/process",
-        "dsp",
+        "http://localhost:8089/process", "dsp",
     ),
     "java_dsp_mc": (
+        "java_dsp_3c", "java_dsp_mc",
         os.path.join(LOGS_DIR, "java_dsp_mc_requests.csv"),
-        "http://localhost:8090/process",
-        "dsp",
+        "http://localhost:8090/process", "dsp",
     ),
     "go_sqlite_mc": (
+        "go_sqlite_3c", "go_sqlite_mc",
         os.path.join(LOGS_DIR, "go_sqlite_mc_requests.csv"),
-        "http://localhost:8091/process",
-        "sqlite",
+        "http://localhost:8091/process", "sqlite",
     ),
 }
 
@@ -105,15 +109,17 @@ def clear_csv(path: str) -> None:
 
 
 def run_sweep(server: str, rate: float) -> bool:
-    live_csv, url, kind = SERVERS[server]
-    dest = os.path.join(EXP_DIR, f"{server}_{int(rate)}rps.csv")
+    exp_folder, file_tag, live_csv, url, kind = SERVERS[server]
+    out_dir = os.path.join(EXP_BASE, exp_folder)
+    os.makedirs(out_dir, exist_ok=True)
+    dest = os.path.join(out_dir, f"{file_tag}_{int(rate)}rps.csv")
 
     print(f"\n{'='*60}")
-    print(f"  {server}  {rate} rps  ->  {dest}")
+    print(f"  {server}  {rate} rps  ->  experiments/{exp_folder}/")
     print(f"{'='*60}")
 
     clear_csv(live_csv)
-    time.sleep(0.5)  # let file system settle
+    time.sleep(0.5)
 
     if kind == "dsp":
         cmd = [
@@ -134,11 +140,11 @@ def run_sweep(server: str, rate: float) -> bool:
         ]
 
     try:
-        result = subprocess.run(cmd, timeout=TIMEOUT, capture_output=False)
+        subprocess.run(cmd, timeout=TIMEOUT, capture_output=False)
     except subprocess.TimeoutExpired:
         print(f"  [WARN] load generator timed out after {TIMEOUT}s")
 
-    time.sleep(2)  # let final CSV writes flush
+    time.sleep(2)
 
     if os.path.exists(live_csv) and os.path.getsize(live_csv) > 100:
         shutil.copy2(live_csv, dest)
@@ -167,8 +173,9 @@ def main():
         if server not in SERVERS:
             print(f"Unknown server: {server}")
             continue
+        exp_folder, file_tag, _, _, _ = SERVERS[server]
         for rate in SWEEP_RATES[server]:
-            dest = os.path.join(EXP_DIR, f"{server}_{int(rate)}rps.csv")
+            dest = os.path.join(EXP_BASE, exp_folder, f"{file_tag}_{int(rate)}rps.csv")
             if os.path.exists(dest) and os.path.getsize(dest) > 200:
                 print(f"  SKIP  {server} {rate} rps  (exists, {os.path.getsize(dest)//1024}KB)")
                 done += 1

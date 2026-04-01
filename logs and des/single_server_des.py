@@ -12,8 +12,8 @@ def parse_args():
     )
     parser.add_argument(
         "--input",
-        default="logs and des/requests_2rps.csv",
-        help="Input CSV path (default: logs and des/requests_2rps.csv)",
+        required=True,
+        help="Input CSV trace path (required)",
     )
     parser.add_argument(
         "--output",

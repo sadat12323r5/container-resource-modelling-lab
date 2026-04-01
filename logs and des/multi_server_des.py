@@ -39,7 +39,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="M/G/c trace-driven DES: c parallel workers, shared arrival queue."
     )
-    parser.add_argument("--input",  default="logs and des/requests_2rps.csv")
+    parser.add_argument("--input",  required=True, help="Input CSV trace path (required)")
     parser.add_argument("--output", default="logs and des/mgc_simulated.csv")
     parser.add_argument(
         "--mode",

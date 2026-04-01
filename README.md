@@ -1,14 +1,123 @@
 # Docker Container Capacity Modelling — Research Platform
 
-A reproducible, personal-machine research platform for capacity planning of containerised
-microservices. The platform progressively builds from foundational single-server queueing
-experiments through multi-worker scaling, CPU-resource sweeps, and ML-assisted capacity
-prediction — replicating and extending the MLASP (Vitui & Chen, 2021) pipeline in a
-controlled Docker environment.
+COMP9334 thesis project (UNSW). The core question is: given a measured trace of
+real requests to a containerised server, can we accurately predict what the
+response-time distribution will look like at a higher load — without running the
+server at that load?
 
-This is **Iteration 1** of a multi-iteration thesis project (COMP9334, UNSW). Each
-iteration adds one dimension of complexity: server concurrency, resource configuration,
-service topology, or modelling technique.
+We answer this using **Discrete Event Simulation (DES)** driven by queueing
+theory, validate the predictions against ground truth, and identify exactly when
+and why the approach breaks down.
+
+---
+
+## Background: Key Concepts
+
+### Request timing
+
+Every request goes through three phases:
+
+```
+|--- queue_ms ---|--- service_ms ---|
+|-------------- response_ms --------|
+```
+
+- **service_ms** — time the server is actively processing the request (CPU or I/O)
+- **queue_ms** — time the request spent waiting before the server picked it up
+- **response_ms** = service_ms + queue_ms (what the client experiences)
+
+At low load, queue_ms ≈ 0 so response ≈ service. At high load, the queue grows
+and dominates response time. The goal is to predict this growth.
+
+### Queueing models: M/G/1 and M/G/c
+
+We model each server as a queueing system. The notation M/G/c means:
+
+- **M** — arrivals follow a Poisson process (exponential inter-arrival times),
+  which is what our load generator produces
+- **G** — service times can follow any ("General") distribution
+- **c** — number of parallel workers (servers)
+
+A single-worker server is M/G/1. A server with 3 worker threads or processes is
+M/G/3 (a special case of M/G/c). The model says: given the arrival rate and the
+service time distribution, what is the response time distribution?
+
+### Server utilisation (rho)
+
+```
+rho = arrival_rate × mean_service_time / c
+    = lambda × E[S] / c
+```
+
+where `lambda` is requests per second, `E[S]` is mean service time in seconds,
+and `c` is the number of workers. `rho` is a fraction (0–1) representing how
+busy the server is on average. When `rho` approaches 1, the queue grows without
+bound. All DES predictions are only valid for `rho < 1`.
+
+### Discrete Event Simulation (DES)
+
+DES replays a sequence of synthetic requests through the queueing model and
+records simulated response times. The simulation works as follows:
+
+1. Take the observed arrival times from a real trace (so the inter-arrival
+   distribution matches the real workload exactly)
+2. For each arriving request, generate a service time — either by replaying
+   observed service times, resampling them, or drawing from a fitted distribution
+3. Assign the request to the next free worker; if all workers are busy, the
+   request waits in a FIFO queue
+4. Record when each request finishes (response time = queue wait + service time)
+
+The output is a synthetic trace of simulated response times that can be compared
+to real measured response times.
+
+### DES modes
+
+Three modes control how service times are generated during simulation:
+
+| Mode | Service time source | What it tests |
+|---|---|---|
+| **Replay** | Observed values fed back in arrival order | Queueing model accuracy only — removes any distribution error |
+| **Bootstrap** | Random resample (with replacement) from observed values | Sensitivity to sample variance; should be close to replay |
+| **Parametric** | Fit a lognormal (default), gamma, or Weibull to the data and sample | How well the assumed distribution family matches reality |
+
+Replay is the most informative: if replay KS is high, the queueing model itself
+is wrong (hidden contention, load-dependent service times). If replay KS is low
+but parametric KS is high, only the distribution assumption is wrong.
+
+### CDF and KS distance
+
+A **Cumulative Distribution Function (CDF)** at value x gives the fraction of
+requests with response time ≤ x. Plotting observed vs simulated CDFs on the same
+axes shows exactly where they diverge.
+
+The **Kolmogorov-Smirnov (KS) distance** is the maximum vertical gap between the
+two CDFs across all x values:
+
+```
+KS = max over all x of |F_observed(x) − F_simulated(x)|
+```
+
+It is computed as follows:
+1. Merge all unique response time values from both the observed and simulated lists
+2. At each unique value x, compute what fraction of observed requests finished by
+   x and what fraction of simulated requests finished by x
+3. KS = the largest absolute difference found in step 2
+
+KS is always between 0 and 1. A value of 0 means the two distributions are
+identical; a value of 1 means they do not overlap at all. KS is unit-free and
+does not depend on the scale of response times, making it comparable across
+servers with very different service rates.
+
+In the CDF plots (`experiments/*/cdf.png`), the red double-headed arrow shows
+the location and magnitude of the KS gap.
+
+### Capacity knee
+
+The **capacity knee** is the arrival rate at which response time starts growing
+rapidly — the practical saturation point. Below the knee, response time is
+roughly flat. Above it, queue build-up causes response time to diverge. For an
+M/G/1 queue the theoretical knee is at `rho = 1`, but in practice servers show
+degradation earlier due to contention or service time growth.
 
 ---
 
@@ -16,128 +125,44 @@ service topology, or modelling technique.
 
 | Iteration | Focus | Status |
 |---|---|---|
-| 1 | Single-server, single-queue: DES validation, operational laws, ML baseline | **Complete** |
-| 2 | Multi-worker scaling + CPU-limit sweep: how does capacity change with resource allocation? | Planned |
-| 3 | Queueing networks: two-tier service, MVA comparison, bottleneck identification | Planned |
-| 4 | MLASP pipeline: train `(cpu_limit, arrival_rate) → response_p99` model, SLA query | Planned |
+| 1 | Single-server M/G/1: DES validation, operational laws, ML baseline | **Complete** |
+| 2 | Multi-runtime comparison + M/G/c multi-worker scaling | **Complete** |
+| 3 | Queueing networks: two-tier service, MVA comparison | Planned |
+| 4 | MLASP pipeline: `(cpu_limit, arrival_rate) → response_p99` | Planned |
 
 ---
 
-## Iteration 1 — What Has Been Done
+## Servers Under Test
 
-### Experimental scope
-- Go single-worker FCFS server, rate sweep 50–400 rps (90 s per step), 8 rates
-- Fine-grained sweep around the capacity knee: 150, 175, 200, 225, 250 rps
-- Apache/PHP messaging backend, rate sweep 10–50 rps (90 s per step)
+All containers run on Docker Compose. Single-core variants pin to `cpuset=0,
+cpus=1.0`; multi-core variants pin to `cpuset=0,1,2, cpus=3.0`. Run only one
+server at a time to avoid cross-container CPU contention.
 
-### DES validation (Go server)
-Three simulation modes against observed traces, with Kolmogorov-Smirnov distance as
-the fidelity metric and a 0.006 ms goroutine-scheduling floor correction applied.
-The DES also includes a **queue-capacity drop model** (`--queue-capacity 1024`) that
-mirrors the Go server's 1024-job channel limit: arrivals that find the simulated queue
-full are dropped (status 503) and excluded from the KS comparison.
+The **service pipeline** used by all DSP-AES servers is identical: AES-256-CBC
+decrypt → 64-tap FIR low-pass filter → AES-256-CBC re-encrypt on 1024 float32
+audio samples. This is a realistic CPU-bound workload with predictable memory
+access patterns.
 
-| Mode | Method | KS_response (200 rps) |
-|---|---|---:|
-| Replay | Observed service times in arrival order | **0.029** |
-| Bootstrap | Resample with replacement | 0.132 |
-| Parametric | Lognormal fit (MLE) + i.i.d. draws | 0.141 |
+### Single-core (c = 1)
 
-Capacity knee at ~190 rps (this run; varies ±20 rps with WSL2 calibration):
-queue p99 jumps 8×, achieved throughput drops below offered load at 200+ rps.
+| Service | Port | Architecture | Avg service time | Capacity knee | Best KS |
+|---|---|---|---|---|---|
+| `app` (Go lognormal) | 8080 | Single goroutine FCFS queue | ~1.1 ms | ~190 rps | 0.017 |
+| `apache` (PHP messaging) | 8082 | mpm_prefork + file lock | ~1.8 ms | ~30 rps | 0.315 |
+| `apache-dsp` (PHP AES+FIR) | 8083 | mpm_prefork, CPU-bound | ~2.3 ms | ~50 rps | 0.137 |
+| `node-dsp` (JS AES+FIR) | 8084 | Single event loop | ~0.5 ms | ~600 rps | 0.140 |
+| `python-dsp` (Py AES+FIR) | 8085 | Gunicorn single worker | ~7.5 ms | ~90 rps | 0.105 |
+| `java-dsp` (JVM AES+FIR) | 8086 | ThreadPoolExecutor 4 threads | ~0.2 ms | >2000 rps | 0.158 |
+| `go-sqlite` (Go SQLite) | 8087 | Single goroutine FCFS queue | ~10 ms | ~75 rps | 0.151 |
 
-### Operational laws validation
-- **Utilisation law** (ρ = λ E[S]): validated across all 8 rates (ρ = 6.2%–55.2%)
-- **Little's Law**: formula holds conceptually; direct P-K comparison is confounded
-  by the 6 µs goroutine scheduling floor added to every queue_ms measurement
+### Multi-core (c = 3, three CPU cores)
 
-### ML baseline vs DES
-Polynomial regression (degree 1 and 2) with leave-one-out cross-validation:
-
-| Model | LOOCV MAE p99 | vs DES replay |
-|---|---:|---|
-| Linear regression | 8.9 ms | 6.3× more accurate than DES at saturation |
-| DES replay | 79.5 ms | 30–50× more accurate than ML at low utilisation |
-
-DES replay dominates at low load (ρ < 30%). ML dominates near/above saturation
-because the DES has no request-drop model and simulates unbounded queue growth.
-The ML advantage grows when WSL2 calibrates slower (longer actual service times →
-earlier saturation → worse DES over-prediction).
-
-Parametric DES cross-rate generalisation: 22 ms error within regime (100→200 rps),
-198 ms error across the capacity boundary (100→400 rps).
-
-### Apache comparison
-Apache/PHP with file-backed message store (bounded ring buffer, 1000-message cap):
-
-| rate | tput | resp_p99 | q_p99 | KS_replay |
-|---:|---:|---:|---:|---:|
-| 10 rps | 10.0 | 10.1 ms | 6.5 ms | 0.485 |
-| 25 rps | 25.0 | 14.1 ms | 9.8 ms | 0.425 |
-| 50 rps | 50.0 | 35.8 ms | 27.2 ms | 0.397 |
-
-DES KS ≈ 0.44 for Apache vs ≈ 0.03 for Go. Apache's dominant latency source is
-mpm_prefork file-lock contention — invisible to the M/G/1 model — demonstrating the
-scope condition under which DES is accurate.
-
-Full results and analysis: see [`EXPERIMENTS.md`](EXPERIMENTS.md).
-
----
-
-## Architecture
-
-### System topology
-
-| Service | Port | Role |
-|---|---|---|
-| `app` | 8080 | Go single-worker FCFS queueing server — primary DES target |
-| `apache` | 8082 | PHP/Apache messaging backend + browser chat UI |
-| `cadvisor` | 8081 | Container-level CPU/memory metrics |
-| `prometheus` | 9090 | Scrapes cAdvisor |
-| `grafana` | 3000 | Visualises Prometheus metrics |
-
-Both `app` and `apache` are pinned to `cpuset: "0"`, `cpus: "1.0"` in
-`docker-compose.yml`. Run one workload at a time to avoid CPU contention between services.
-
-### Go service (`server_single/main.go`)
-
-- One HTTP ingress goroutine timestamps each arriving request and enqueues a job
-- One worker goroutine dequeues jobs, samples a service demand from the configured
-  distribution, and runs a calibrated busy-loop to approximate CPU work
-- Job queue depth 1024; full queue returns `503 queue full` immediately
-- Async logger goroutine writes CSV records with backpressure (never drops records)
-- Shutdown: stops accepting, drains queue, flushes CSV
-
-### Apache service (`apache/index.php`)
-
-- `GET /` — serves `chat.html` (browser chat UI)
-- `GET /health` — lightweight timing endpoint
-- `POST /send` — accepts `{"room","user","text"}`, appends to bounded JSONL store
-- `GET /messages?room=&since_id=&limit=` — returns recent messages for a room
-
-Each request samples a synthetic service demand and busy-loops before routing.
-Response headers expose `X-Service-Target-Us` and `X-Service-Actual-Ms`.
-
-Message store: append-only JSONL capped at `APACHE_MAX_MESSAGES` (default 1000) with
-O(1) fast-path append and O(limit) read. Resets on container recreation.
-
-CSV trace logging: every request is logged to `APACHE_TRACE_CSV` with the same schema
-as the Go server — enabling DES comparison on Apache traces.
-
-### Measurement pipeline
-
-```
-poisson_load_generator.py  -->  Go app  -->  logs and des/requests.csv
-apache_load.py             -->  Apache  -->  logs and des/apache_requests.csv
-
-run_experiments.py  (phases 1-3)
-  Phase 1: Go coarse sweep   [50, 100, 200, 400 rps]
-  Phase 2: Go fine sweep     [150, 175, 225, 250 rps]  around capacity knee
-  Phase 3: Apache sweep      [10, 25, 50 rps]
-
-  per-rate CSV slice  -->  single_server_des.py  -->  DES output CSV + KS distances
-                       -->  ml_baseline.py        -->  LOOCV MAE, operational laws
-```
+| Service | Port | Architecture | Capacity knee | Scaling vs 1c | Best KS |
+|---|---|---|---|---|---|
+| `node-dsp-mc` | 8088 | Node.js cluster, 3 processes | ~1400 rps | 2.3x | 0.664 |
+| `python-dsp-mc` | 8089 | Gunicorn 3 workers | ~270 rps | 3.0x | 0.039 |
+| `java-dsp-mc` | 8090 | ThreadPoolExecutor 3 threads | >2000 rps | ~1x | 0.158 |
+| `go-sqlite-mc` | 8091 | 3 goroutines, SQLite WAL | ~165 rps | 2.2x | 0.153 |
 
 ---
 
@@ -145,197 +170,374 @@ run_experiments.py  (phases 1-3)
 
 ```
 Capacity_lab/
-├── server_single/
-│   ├── main.go              # Go single-worker HTTP service + CSV logger
-│   ├── Dockerfile
-│   └── go.mod
-├── apache/
-│   ├── index.php            # PHP routing, synthetic load, bounded JSONL store, CSV log
-│   ├── .htaccess            # FallbackResource /index.php
-│   ├── 000-default.conf     # Apache VirtualHost with AllowOverride All
-│   ├── chat.html            # Browser chat UI
-│   ├── chat.js
-│   └── chat.css
+├── server_single/          # Go lognormal server (port 8080)
+├── apache/                 # PHP messaging backend (port 8082)
+├── apache_dsp_aes/         # PHP DSP-AES server (port 8083)
+├── node_dsp_aes/           # Node.js DSP-AES server (port 8084)
+├── python_dsp_aes/         # Python/Gunicorn DSP-AES server (port 8085)
+├── java_dsp_aes/           # Java ThreadPool DSP-AES server (port 8086)
+├── go_sqlite/              # Go SQLite I/O server (port 8087)
+│
+├── experiments/            # All results — one subfolder per server config
+│   ├── go_1c/              #   Raw traces, DES outputs, summary CSV, cdf.png, README
+│   ├── apache_msg_1c/
+│   ├── apache_dsp_1c/
+│   ├── node_dsp_1c/
+│   ├── python_dsp_1c/
+│   ├── java_dsp_1c/
+│   ├── go_sqlite_1c/
+│   ├── node_dsp_3c/
+│   ├── python_dsp_3c/
+│   ├── java_dsp_3c/
+│   └── go_sqlite_3c/
+│
 ├── logs and des/
-│   ├── requests.csv             # Go app trace log (bind-mounted from container)
-│   ├── apache_requests.csv      # Apache trace log (bind-mounted from container)
-│   ├── single_server_des.py     # FCFS DES: replay, bootstrap, parametric modes
-│   ├── plot_metrics.py          # Histogram/CDF plotting helper
-│   └── experiments/             # Per-rate CSV slices + DES outputs (git-ignored)
-│       ├── go_<rate>rps.csv
-│       ├── go_<rate>rps_des_<mode>.csv
-│       ├── apache_<rate>rps.csv
-│       ├── apache_<rate>rps_des_<mode>.csv
-│       └── experiment_results.json
-├── poisson_load_generator.py    # Open-loop Poisson generator (Go app, GET only)
-├── apache_load.py               # Open-loop Poisson generator (Apache, GET + POST)
-├── run_experiments.py           # Automated three-phase experiment runner
-├── ml_baseline.py               # Polynomial LOOCV, operational laws, DES vs ML
-├── environment.yml              # Conda environment for CI
+│   ├── single_server_des.py    # M/G/1 trace-driven DES engine
+│   ├── multi_server_des.py     # M/G/c trace-driven DES engine
+│   └── <server>_requests.csv  # Live log files written by running containers
+│
+├── des_utils.py                # Shared helpers: pct, ks_distance, make_cdf, read_csv_col
+├── poisson_load_generator.py   # Load generator for Go lognormal server
+├── apache_load.py              # Load generator for Apache messaging server
+├── dsp_aes_load.py             # Load generator for all DSP-AES servers
+├── sqlite_load.py              # Load generator for Go SQLite server
+├── run_sweeps.py               # Orchestrates all load sweeps across all servers
+├── run_des_all.py              # Runs DES on all traces; writes summary CSVs
+├── plot_all_cdfs.py            # Generates cdf.png in each experiments/ subfolder
+├── write_server_readmes.py     # Regenerates experiments/*/README.md
+├── ml_baseline.py              # ML vs DES comparison (polynomial regression, LOOCV)
 ├── docker-compose.yml
-└── prometheus.yml
+├── environment.yml             # Conda environment spec
+└── EXPERIMENTS.md              # Full experiment log and cross-server analysis
 ```
-
----
-
-## Quick Start
-
-### 1. Start the stack
-
-```bash
-docker compose up --build
-```
-
-### 2. Verify endpoints
-
-```bash
-curl http://localhost:8080/                        # Go app (returns JSON)
-curl http://localhost:8082/health                  # Apache health
-curl -X POST http://localhost:8082/send \
-  -H "Content-Type: application/json" \
-  -d '{"user":"alice","room":"general","text":"hello"}'
-curl "http://localhost:8082/messages?room=general"
-```
-
-### 3. Run the full experiment suite
-
-Runs all three phases (Go coarse + fine sweep, Apache sweep), DES in all three modes,
-and saves per-rate CSVs + a consolidated JSON to `logs and des/experiments/`.
-
-```bash
-python run_experiments.py
-```
-
-### 4. Run the ML baseline and operational laws validation
-
-```bash
-python ml_baseline.py
-```
-
-Prints: utilisation law table, Little's Law check, LOOCV MAE for linear/quadratic
-regression, per-rate DES vs ML comparison, and cross-rate generalisation results.
-
-### 5. Run a single load step
-
-```bash
-# Go app
-python poisson_load_generator.py --url http://localhost:8080/ --rate 200 --duration 60
-
-# Apache (70% GET /messages + 30% POST /send)
-python apache_load.py --rate 25 --duration 60 --post-ratio 0.3
-```
-
-### 6. Run DES against a trace
-
-```bash
-python "logs and des/single_server_des.py" \
-  --input  "logs and des/requests.csv" \
-  --output "logs and des/des_simulated.csv" \
-  --mode   replay \
-  --queue-offset 0.006
-```
-
-Available modes: `replay`, `bootstrap`, `parametric`.
-`--queue-offset 0.006` subtracts the 6 µs goroutine scheduling floor from observed
-queue times before the KS comparison (Go server only; omit for Apache).
-
-### 7. Plot a trace
-
-```bash
-python "logs and des/plot_metrics.py"
-python "logs and des/plot_metrics.py" --all --logy
-```
-
----
-
-## CSV Trace Format (Go server)
-
-Written to `./logs and des/requests.csv` (bind-mounted from the Go container):
-
-```
-id, trace_id, arrival_unix_ns, service_start_unix_ns, service_end_unix_ns,
-response_end_unix_ns, queue_ms, service_ms, response_ms, status_code, bytes_written
-```
-
-All timestamp fields are Unix nanoseconds. `queue_ms`, `service_ms`, and `response_ms`
-are floating-point milliseconds derived from Go's monotonic clock.
-
-## CSV Trace Format (Apache server)
-
-Written to `./logs and des/apache_requests.csv` (bind-mounted from the Apache container):
-
-```
-arrival_unix_ns, service_ms, queue_ms, response_ms, status_code
-```
-
-`arrival_unix_ns` is derived from PHP's `$_SERVER['REQUEST_TIME_FLOAT']` (wall clock).
-`service_ms` is the synthetic busy-loop time (i.i.d. lognormal draws).
-`queue_ms` captures PHP overhead not modelled by DES (file I/O, lock wait).
-`response_ms` is total PHP execution time.
-
----
-
-## Service-Time Distributions
-
-Both services sample synthetic service demand per request, controlled by environment
-variables.
-
-| `SERVICE_DIST` | Additional vars | Description |
-|---|---|---|
-| `lognormal` | `SERVICE_MEAN_US`, `SERVICE_LOGN_SIGMA` | Log-normal (default) |
-| `exponential` | `SERVICE_MEAN_US` | Exponential |
-| `uniform` | `SERVICE_MIN_US`, `SERVICE_MAX_US` | Uniform range |
-| `fixed` | `SERVICE_MEAN_US` | Constant |
-
-Apache uses the same options prefixed with `APACHE_` (e.g. `APACHE_SERVICE_DIST`).
-
-Default: `lognormal`, mean **2000 µs**, σ = 0.5. At 200 rps this places the Go server
-at ρ ≈ 30%, producing measurable M/G/1 queueing without saturation.
 
 ---
 
 ## Dependencies
 
 ```bash
-pip install pandas matplotlib
+pip install requests matplotlib cryptography
+
+# Or via conda
+conda env create -f environment.yml
+conda activate capacity_lab
 ```
 
-Python 3.10+ required. Docker Desktop with Linux engine required for the stack.
-No cloud infrastructure required — the platform is designed to run on a personal machine.
+Python 3.10+ and Docker Desktop (Linux engine) required.
+
+---
+
+## Full Replication Guide
+
+These steps reproduce every file in `experiments/` from scratch. Each step is
+independent and idempotent (safe to re-run; existing output files are skipped).
+
+### Step 1 — Start a server
+
+Start one server at a time. Each is pinned to specific CPU cores in
+`docker-compose.yml` so containers do not steal CPU from each other.
+
+```bash
+docker compose up -d --build app           # Go lognormal          (port 8080)
+docker compose up -d --build apache        # Apache messaging       (port 8082)
+docker compose up -d --build apache-dsp    # Apache DSP-AES        (port 8083)
+docker compose up -d --build node-dsp      # Node.js DSP-AES 1c    (port 8084)
+docker compose up -d --build python-dsp    # Python DSP-AES 1c     (port 8085)
+docker compose up -d --build java-dsp      # Java DSP-AES 1c       (port 8086)
+docker compose up -d --build go-sqlite     # Go SQLite 1c          (port 8087)
+docker compose up -d --build node-dsp-mc   # Node.js cluster 3c    (port 8088)
+docker compose up -d --build python-dsp-mc # Gunicorn 3 workers 3c (port 8089)
+docker compose up -d --build java-dsp-mc   # Java thread pool 3c   (port 8090)
+docker compose up -d --build go-sqlite-mc  # Go SQLite WAL 3c      (port 8091)
+```
+
+Wait ~5 s after starting the JVM or Gunicorn servers before sending load — they
+have a warm-up phase before reaching steady-state throughput.
+
+### Step 2 — Run load sweeps
+
+The load generators send requests following a Poisson process (exponential
+inter-arrival times) at a fixed average rate. Poisson arrivals are standard for
+validating M/G/c models because the M/G/c queue assumes Poisson input.
+
+Each sweep runs for 90 s per rate point and writes a trace CSV to
+`experiments/<folder>/`. Existing files are skipped automatically.
+
+```bash
+python run_sweeps.py --servers go           # 50/100/200/400 rps
+python run_sweeps.py --servers apache_msg   # 10/25/50 rps
+python run_sweeps.py --servers apache_dsp   # 10/25/50/75/100 rps
+python run_sweeps.py --servers node_dsp     # 200/400/800/1200/1600 rps
+python run_sweeps.py --servers python_dsp   # 10/25/50/75 rps
+python run_sweeps.py --servers java_dsp     # 25/50/100/200/400/600 rps
+python run_sweeps.py --servers go_sqlite    # 10/25/50/75/100/200/400/600 rps
+python run_sweeps.py --servers node_dsp_mc  # 200/400/800/1600/2400 rps
+python run_sweeps.py --servers python_dsp_mc # 25/50/100/150/200/250/300 rps
+python run_sweeps.py --servers java_dsp_mc  # 100/200/400/600/800 rps
+python run_sweeps.py --servers go_sqlite_mc # 50/100/200/400/800 rps
+```
+
+To run everything unattended (~3–4 hours total):
+```bash
+python run_sweeps.py
+```
+
+Each trace CSV contains one row per request:
+```
+arrival_unix_ns, service_ms, queue_ms, response_ms, status_code
+```
+
+### Step 3 — Run DES on all traces
+
+```bash
+python run_des_all.py                        # all servers
+python run_des_all.py --servers go python_dsp  # specific servers
+```
+
+For each trace CSV in `experiments/<folder>/`, this runs all three DES modes and
+writes four files back to the same folder:
+
+```
+<tag>_<rate>rps_des_replay.csv      — simulated trace, replay mode
+<tag>_<rate>rps_des_bootstrap.csv   — simulated trace, bootstrap mode
+<tag>_<rate>rps_des_parametric.csv  — simulated trace, parametric mode
+<tag>_summary.csv                   — per-rate summary (rho, KS distances, percentiles)
+```
+
+The DES output CSVs have the schema:
+```
+sim_arrival_s, sim_response_ms, sim_queue_ms, sim_status
+```
+
+### Step 4 — Generate CDF plots
+
+```bash
+python plot_all_cdfs.py              # all servers -> experiments/*/cdf.png
+python plot_all_cdfs.py go_1c        # single folder
+```
+
+Each `cdf.png` has one panel per rate point. Each panel shows:
+- Solid blue line: observed response-time CDF from the real trace
+- Dashed red: replay DES CDF, labelled with its KS distance
+- Dashed orange: bootstrap DES CDF
+- Dotted purple: parametric DES CDF
+- Red double arrow: position and magnitude of the KS gap (replay only)
+
+### Step 5 — Regenerate per-server READMEs
+
+```bash
+python write_server_readmes.py
+```
+
+Reads each `*_summary.csv` and overwrites `experiments/*/README.md` with a
+formatted results table and interpretation notes.
+
+### Step 6 — ML baseline comparison (Go server)
+
+```bash
+python ml_baseline.py
+```
+
+Fits a polynomial regression model to predict `response_p99` from arrival rate
+using leave-one-out cross-validation (LOOCV — train on all rate points except
+one, predict the held-out point, repeat). Compares prediction error against DES
+replay. Requires `experiments/go_1c/` data.
+
+---
+
+## Running DES on a Single Trace Manually
+
+```bash
+# M/G/1 (single-worker server)
+python "logs and des/single_server_des.py" \
+  --input  experiments/go_1c/go_100rps.csv \
+  --output des_out.csv \
+  --mode   replay
+
+# M/G/c (multi-worker server, e.g. 3 workers)
+python "logs and des/multi_server_des.py" \
+  --input   experiments/python_dsp_3c/python_dsp_mc_100rps.csv \
+  --output  des_out.csv \
+  --mode    replay \
+  --workers 3
+
+# Parametric mode with a different distribution family
+python "logs and des/single_server_des.py" \
+  --input experiments/node_dsp_1c/node_dsp_200rps.csv \
+  --output des_out.csv \
+  --mode parametric --dist gamma
+```
+
+`--dist` choices: `lognormal` (default), `gamma`, `weibull`
+
+---
+
+## Validating Results
+
+### Reading the summary CSV
+
+After Step 3, open `experiments/<folder>/<tag>_summary.csv`. Each row is one
+rate point. The most important columns:
+
+| Column | What it measures | Healthy range |
+|---|---|---|
+| `rho` | Server utilisation = `rate × mean_service_ms / 1000 / workers` | 0–1; DES is only valid below 1 |
+| `mean_svc_ms` | Mean service time across all 200-status requests | Should be stable across rates; growth indicates contention |
+| `p50_resp_ms` / `p99_resp_ms` | Observed response time percentiles | Grow sharply near the capacity knee |
+| `ks_replay` | KS distance between observed and replay-DES CDFs | Primary accuracy metric |
+| `ks_bootstrap` | KS distance, bootstrap mode | Should be within ~0.02 of `ks_replay` |
+| `ks_parametric` | KS distance, parametric mode | Compare to `ks_replay` to isolate distribution vs queueing error |
+
+### KS distance thresholds
+
+The KS distance ranges from 0 (perfect match) to 1 (no overlap):
+
+| KS range | Interpretation |
+|---|---|
+| < 0.05 | Excellent — distribution and queueing dynamics are both captured |
+| 0.05–0.15 | Good — minor shape mismatch; predictions are useful for capacity planning |
+| 0.15–0.30 | Moderate — directionally correct; quantile estimates may be off by 20–50% |
+| > 0.30 | Poor — a structural model assumption is violated |
+
+To put these in context: a KS of 0.10 means there exists some response time
+threshold x where the model predicts 10% more (or fewer) requests finish by x
+than actually did. For p99 capacity planning, this translates to a meaningful
+absolute error at high percentiles.
+
+### Expected results by server config
+
+These are the KS distances you should reproduce. Significant deviations indicate
+a setup or measurement problem.
+
+| Config | Rates (rps) | rho range | KS replay (expected range) | Notes |
+|---|---|---|---|---|
+| `go_1c` | 50–400 | 0.04–0.33 | **0.017–0.085** | Best case: service dist is exactly lognormal |
+| `apache_msg_1c` | 10–50 | 0.02–0.09 | 0.29–0.46 | File-lock contention; no distribution helps |
+| `apache_dsp_1c` | 10–100 | 0.02–0.20 | 0.07–0.97 | Collapses at saturation; good at light load |
+| `node_dsp_1c` | 50–1600 | 0.02–0.63 | 0.14–0.42 | Bimodal service (GC stalls); KS improves at high rho |
+| `python_dsp_1c` | 10–75 | 0.07–0.55 | 0.08–0.55 | Cold-start at 10 rps inflates KS; good above 25 rps |
+| `java_dsp_1c` | 25–600 | low | 0.16–0.75 | JIT warm-up bimodality at 25 rps; settles at ~0.16 above 50 rps |
+| `go_sqlite_1c` | 10–600 | 0.10–0.60+ | 0.12–0.50 | I/O-bound; load-dependent service time (WAL lock) |
+| `node_dsp_3c` | 200–2400 | 0.05–0.60 | **0.64–0.81** | High KS at all rates; bimodal dist survives adding cores |
+| `python_dsp_3c` | 25–300 | 0.06–0.75 | **0.039–0.065** | Best M/G/c result; near-constant service + 3 independent workers |
+| `java_dsp_3c` | 100–800 | low | 0.16–0.34 | Same JIT bound as 1c; client-limited throughput |
+| `go_sqlite_3c` | 50–800 | 0.07–0.55 | 0.10–0.25 | WAL serialises writes; KS stable; 2.2x throughput scaling |
+
+### Diagnosing high KS
+
+If `ks_replay` is higher than the expected range:
+
+**1. Check whether rho exceeds 1.**
+If `rho > 1` the model is unstable — the server cannot keep up with arrivals.
+DES will predict infinite queue growth while the real server throttles. This is
+not a model failure; it means the rate point is beyond the server's capacity.
+
+**2. Check whether service time grows with load.**
+Open two trace CSVs (low rate and high rate) and compare the `service_ms`
+column. If the mean or variance grows significantly with rate, the server has
+load-dependent service times — for example, due to CPU contention between worker
+threads or OS scheduling delays. M/G/c assumes service time is independent of
+queue length; when this is violated, no distribution choice can fix the KS.
+
+**3. Compare `ks_parametric` to `ks_replay`.**
+If parametric >> replay, the queueing model is fine but the assumed distribution
+family (lognormal) is a bad fit for the service time. Try `--dist gamma` or
+`--dist weibull` in the DES script directly. If both are similarly poor, the
+problem is in the queueing model itself (see point 2).
+
+**4. Look at the CDF plot.**
+The red arrow in `cdf.png` shows the x-value where the gap is largest. If the
+gap is in the tail (high response times), the model underestimates tail latency
+— common when service times have occasional large outliers. If the gap is near
+the median, the model predicts a completely different central tendency.
+
+### Operational law verification (Go server)
+
+Before trusting DES results, verify that the basic queueing laws hold in the
+measured data. These are deterministic identities — they must hold in any stable
+system regardless of distribution.
+
+**Utilisation law:**
+```
+rho = lambda × E[S]
+```
+where `lambda` = observed throughput in rps (from the trace), and `E[S]` =
+mean `service_ms` / 1000. Compute both from the trace CSV. If `rho` from the
+formula differs from the summary CSV value by more than 5%, check for dropped
+rows, clock drift, or a mismatch between the configured rate and achieved rate.
+
+**Little's Law:**
+```
+E[N] = lambda × E[R]
+```
+where `E[N]` = mean number of requests in the system (queue + in service) and
+`E[R]` = mean `response_ms` / 1000. `E[N]` can be estimated from the trace as
+the mean number of requests whose intervals overlap a given instant. If Little's
+Law fails, measurement timestamps are unreliable.
+
+---
+
+## Key Findings
+
+1. **DES accuracy is determined by service time distribution shape, not by service
+   type (CPU vs I/O).** Go lognormal (KS < 0.03) achieves near-perfect fit because
+   service times are drawn from an exact lognormal. Go SQLite (I/O-bound, ~10 ms)
+   fails the same way as CPU-bound Apache above rho = 0.5, for the same reason:
+   load-dependent service time growth.
+
+2. **M/G/c DES only improves accuracy when both the worker count and the service time
+   distribution are correct.** Python-dsp improves from KS = 0.105 (1 worker) to
+   KS = 0.039 (3 workers) because its service time is near-constant (CV ≈ 0.05) and
+   the three Gunicorn workers are truly independent. Node.js cluster stays at KS >
+   0.66 — adding cores does not fix the bimodal service time distribution caused by
+   OS process-scheduling latency between cluster workers.
+
+3. **Hidden contention creates an irreducible accuracy floor.** Apache's mpm_prefork
+   workers compete for a file lock; Node.js has GC pauses that create occasional
+   large service time outliers. In both cases, the KS floor cannot be reduced by
+   choosing a better distribution, because the violation is in the M/G/c independence
+   assumption, not the distribution family.
+
+4. **ML complements DES rather than replacing it.** At rho < 0.3, DES replay achieves
+   0.05–2.5 ms mean absolute error vs ML's 0.9–5.5 ms, because DES extrapolates
+   queueing dynamics correctly at light load. Above saturation, polynomial regression
+   is 6x more accurate because it fits the empirical curve without assuming M/G/c
+   structure.
+
+5. **Multi-core throughput scaling is architecture-dependent.** Python-dsp (3 fully
+   independent processes) scales at 3.0x. Go SQLite scales at 2.2x because WAL mode
+   still serialises writes. Node.js cluster scales at 2.3x because OS connection
+   dispatch between cluster processes adds latency not present in the 1-process version.
+
+Full analysis with per-rate tables: [EXPERIMENTS.md](EXPERIMENTS.md)
 
 ---
 
 ## Known Measurement Artefacts
 
-### 6 µs goroutine-scheduling floor in `queue_ms` (Go server)
-`queue_ms` is computed as `service_start - arrival`. Even when the server is idle, the
-goroutine round-trip (HTTP handler → job channel → worker goroutine) adds a constant
-~6–8 µs. Subtract 0.006 ms before KS comparisons (`--queue-offset 0.006`). This
-correction is applied automatically by `run_experiments.py`.
+- **Go goroutine scheduling floor (~6 µs):** The Go server dispatches requests to a
+  worker goroutine via a channel. The round-trip adds ~6 µs to every `queue_ms`
+  measurement even when no real queuing occurs. Use `--queue-offset 0.006` in the
+  DES scripts when comparing queue times (not needed for response time comparison).
 
-### ms columns vs ns columns use different clocks (Go server)
-`queue_ms`, `service_ms`, `response_ms` use Go's monotonic clock (`time.Sub()`).
-The ns timestamp columns use the wall clock (`time.Now().UnixNano()`). WSL2 NTP
-adjustments can cause ~0.37% of rows to diverge. Use ms columns for interval analysis;
-use ns columns for ordering only.
+- **WSL2 CPU speed calibration:** The Go server uses a busy-loop calibrated to
+  `SERVICE_MEAN_US`. Under WSL2, the loop runs at 40–65% of the intended speed,
+  so actual service times are longer than configured. The lognormal shape is
+  preserved; only the scale differs. All KS and percentile values reflect the
+  actual measured times.
 
-### Work-based calibration scale under WSL2
-`SERVICE_MEAN_US` declares the target service time, but the busy-loop calibration runs
-once at startup. Under WSL2, actual service times are typically 40–65% of the declared
-value. Distribution shape is preserved (lognormal σ confirmed); only scale differs.
+- **JVM warm-up bimodality:** The Java server's first ~200 requests run 5–10x slower
+  while the JIT compiler interprets bytecode. This creates a bimodal service time
+  distribution that inflates KS to 0.75 at 25 rps. At 50+ rps the JIT-compiled
+  path dominates and KS settles to ~0.16. Always discard or exclude the warm-up
+  window.
 
-### Apache client-side latency includes WSL2 network overhead
-`apache_load.py` measures round-trip time from Python. Docker/WSL2 network adds ~35 ms
-per request on top of PHP execution time. Use the server-side `apache_requests.csv`
-for capacity analysis; treat client-side stats as indicative only.
+- **Node.js event-loop stalls:** The Node.js server's GC and internal event-loop
+  bookkeeping create occasional service time spikes (>2 ms vs the usual 0.5 ms).
+  This bimodality is fundamental to the Node.js runtime and cannot be captured by
+  a unimodal lognormal or gamma distribution.
 
----
-
-## Notes
-
-- Rebuild after Go code changes: `docker compose up --build`
-- Apache messages reset on container recreation; Go CSV persists via bind-mount
-- Filter on `status_code` starting with `2` (200/201) before DES or plotting
-- Drive one workload target at a time — both services share `cpuset: "0"`
-- cAdvisor may log benign warnings about short-lived containers
-- Full experiment log, results tables, findings, and next steps: see [`EXPERIMENTS.md`](EXPERIMENTS.md)
+- **Python cold-start:** At 10 rps the Python server's first ~200 requests are slow
+  while modules finish importing. This inflates KS to 0.55 at 10 rps versus 0.08
+  at 50 rps. Use rates ≥ 25 rps for fair DES comparison, or exclude the first
+  200 rows of the trace.

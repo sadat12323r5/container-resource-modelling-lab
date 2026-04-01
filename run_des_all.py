@@ -1,110 +1,51 @@
 """
-run_des_all.py — Runs M/G/1 or M/G/c DES on every collected trace and
-organises results into per-server experiment folders.
+run_des_all.py — Runs M/G/1 or M/G/c DES on every trace in experiments/<folder>/
+and writes DES output CSVs + summary CSV back into the same folder.
 
-Folder layout created:
-  results/
-    go_1c/          — original Go lognormal sleep server (1 worker)
-    apache_msg_1c/  — Apache message-processing server
-    apache_dsp_1c/  — Apache DSP-AES server
-    node_dsp_1c/    — Node.js DSP-AES server (1 event loop)
-    python_dsp_1c/  — Python/Gunicorn DSP-AES server (1 worker)
-    java_dsp_1c/    — Java ThreadPoolExecutor (4 workers → M/G/4)
-    go_sqlite_1c/   — Go SQLite server (1 worker)
-    node_dsp_3c/    — Node.js cluster (3 workers → M/G/3)
-    python_dsp_3c/  — Python Gunicorn (3 workers → M/G/3)
-    java_dsp_3c/    — Java ThreadPoolExecutor (3 workers → M/G/3)
-    go_sqlite_3c/   — Go SQLite (3 workers → M/G/3)
-
-For each server/rate:
-  - copies the raw trace CSV
-  - runs DES (replay, bootstrap, parametric) and saves simulated CSVs
-  - prints KS distances
+Reads traces directly from experiments/<folder>/ (no intermediate staging directory).
+Running this script is idempotent: it skips DES files that already exist and
+overwrites the summary CSV.
 
 Usage:
-  python run_des_all.py [--servers go apache_dsp node_dsp ...]
-  python run_des_all.py          # all servers
+  python run_des_all.py                       # all server folders
+  python run_des_all.py --servers go node_dsp # specific servers
 """
 import argparse
+import csv
 import os
-import shutil
 import subprocess
 import sys
-import csv
-import math
+
+from des_utils import pct, ks_distance, read_response_ms
 
 BASE     = os.path.dirname(os.path.abspath(__file__))
-EXP_DIR  = os.path.join(BASE, "logs and des", "experiments")
-RES_DIR  = os.path.join(BASE, "results")
+EXP_BASE = os.path.join(BASE, "experiments")
 DES1     = os.path.join(BASE, "logs and des", "single_server_des.py")
 DESC     = os.path.join(BASE, "logs and des", "multi_server_des.py")
 
 # ---------------------------------------------------------------------------
-# Server specs: (result_folder, workers_for_DES, source_csv_prefix)
+# Server specs: (folder_name, workers_for_DES, file_tag_prefix)
+#   folder_name  — subdirectory under experiments/
+#   workers      — c value for M/G/c DES (1 = M/G/1)
+#   prefix       — filename prefix for trace CSVs in that folder
 # ---------------------------------------------------------------------------
 SERVER_SPECS = {
-    # Single-worker servers → M/G/1 DES
-    "go":           ("go_1c",         1, "go_"),
-    "apache_msg":   ("apache_msg_1c", 1, "apache_"),
-    "apache_dsp":   ("apache_dsp_1c", 1, "dsp_aes_"),
-    "node_dsp":     ("node_dsp_1c",   1, "node_dsp_"),
-    "python_dsp":   ("python_dsp_1c", 1, "python_dsp_"),
-    "java_dsp":     ("java_dsp_1c",   4, "java_dsp_"),    # JAVA_WORKERS=4
-    "go_sqlite":    ("go_sqlite_1c",  1, "go_sqlite_"),
+    # Single-worker servers — M/G/1 DES
+    "go":           ("go_1c",          1, "go_"),
+    "apache_msg":   ("apache_msg_1c",  1, "apache_msg_"),
+    "apache_dsp":   ("apache_dsp_1c",  1, "apache_dsp_"),
+    "node_dsp":     ("node_dsp_1c",    1, "node_dsp_"),
+    "python_dsp":   ("python_dsp_1c",  1, "python_dsp_"),
+    "java_dsp":     ("java_dsp_1c",    4, "java_dsp_"),   # JAVA_WORKERS=4
+    "go_sqlite":    ("go_sqlite_1c",   1, "go_sqlite_"),
 
-    # Multi-worker servers → M/G/c DES (c=3)
-    "node_dsp_mc":  ("node_dsp_3c",   3, "node_dsp_mc_"),
-    "python_dsp_mc":("python_dsp_3c", 3, "python_dsp_mc_"),
-    "java_dsp_mc":  ("java_dsp_3c",   3, "java_dsp_mc_"),
-    "go_sqlite_mc": ("go_sqlite_3c",  3, "go_sqlite_mc_"),
+    # Multi-worker servers — M/G/c DES (c=3)
+    "node_dsp_mc":   ("node_dsp_3c",   3, "node_dsp_mc_"),
+    "python_dsp_mc": ("python_dsp_3c", 3, "python_dsp_mc_"),
+    "java_dsp_mc":   ("java_dsp_3c",   3, "java_dsp_mc_"),
+    "go_sqlite_mc":  ("go_sqlite_3c",  3, "go_sqlite_mc_"),
 }
 
-
-def pct(arr, p):
-    if not arr:
-        return float('nan')
-    idx = p / 100 * (len(arr) - 1)
-    lo, hi = int(math.floor(idx)), int(math.ceil(idx))
-    return arr[lo] if lo == hi else arr[lo] * (1 - (idx - lo)) + arr[hi] * (idx - lo)
-
-
-def ks_distance(a, b):
-    """KS distance between two sorted lists (CDFs)."""
-    if not a or not b:
-        return float('nan')
-    all_vals = sorted(set(a) | set(b))
-    fa = [sum(1 for x in a if x <= v) / len(a) for v in all_vals]
-    fb = [sum(1 for x in b if x <= v) / len(b) for v in all_vals]
-    return max(abs(x - y) for x, y in zip(fa, fb))
-
-
-def read_response_ms(path):
-    """Read response times from a trace or DES-simulated CSV.
-    Handles two formats:
-      - Observed trace:  columns include 'response_ms', 'status_code'
-      - DES output:      columns include 'sim_response_ms', 'sim_status'
-      - Go trace (old):  columns include 'response_ms', 'status_code' (wide format)
-    """
-    rows = []
-    try:
-        with open(path, newline='') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Determine status column
-                status = row.get('status_code') or row.get('sim_status', '200')
-                if status != '200':
-                    continue
-                # Determine response time column
-                val_str = row.get('response_ms') or row.get('sim_response_ms')
-                if val_str is None:
-                    continue
-                try:
-                    rows.append(float(val_str))
-                except ValueError:
-                    pass
-    except Exception as e:
-        print(f"    [WARN] could not read {path}: {e}")
-    return sorted(rows)
 
 
 def run_des(trace_path, out_prefix, workers, mode, dist='lognormal'):
@@ -132,17 +73,17 @@ def run_des(trace_path, out_prefix, workers, mode, dist='lognormal'):
 
 def process_server(server_tag):
     folder_name, workers, prefix = SERVER_SPECS[server_tag]
-    out_dir = os.path.join(RES_DIR, folder_name)
-    os.makedirs(out_dir, exist_ok=True)
+    exp_dir = os.path.join(EXP_BASE, folder_name)
+    os.makedirs(exp_dir, exist_ok=True)
 
-    # Find all rate CSVs for this server
+    # Find all rate CSVs for this server (already in experiments/<folder>/)
     traces = []
-    for fn in sorted(os.listdir(EXP_DIR)):
-        if fn.startswith(prefix) and fn.endswith("rps.csv"):
+    for fn in sorted(os.listdir(exp_dir)):
+        if fn.startswith(prefix) and fn.endswith("rps.csv") and "_des_" not in fn:
             rate_str = fn[len(prefix):-len("rps.csv")]
             try:
                 rate = int(rate_str)
-                traces.append((rate, os.path.join(EXP_DIR, fn)))
+                traces.append((rate, os.path.join(exp_dir, fn)))
             except ValueError:
                 pass
 
@@ -162,23 +103,19 @@ def process_server(server_tag):
             print(f"  {rate:4d} rps: too few rows ({len(observed)}), skipping")
             continue
 
-        # Copy raw trace to result folder
-        dest_trace = os.path.join(out_dir, f"{server_tag}_{rate}rps.csv")
-        shutil.copy2(trace_path, dest_trace)
-
-        # Run DES modes
-        out_prefix = os.path.join(out_dir, f"{server_tag}_{rate}rps_des")
+        # Run DES modes (traces already in experiments/<folder>/)
+        out_prefix = os.path.join(exp_dir, f"{prefix}{rate}rps_des")
 
         replay_path = run_des(trace_path, out_prefix, workers, "replay")
         bootstrap_path = run_des(trace_path, out_prefix, workers, "bootstrap")
         parametric_path = run_des(trace_path, out_prefix, workers, "parametric")
 
-        # Compute KS distances
+        # Compute KS distances (ks_distance returns (d, best_x); we only need d)
         def ks(sim_path):
             if not sim_path:
                 return float('nan')
             sim = read_response_ms(sim_path)
-            return ks_distance(observed, sim) if sim else float('nan')
+            return ks_distance(observed, sim)[0] if sim else float('nan')
 
         ks_r = ks(replay_path)
         ks_b = ks(bootstrap_path)
@@ -207,7 +144,7 @@ def process_server(server_tag):
 
     # Write summary CSV
     if summary_rows:
-        summary_path = os.path.join(out_dir, f"{server_tag}_summary.csv")
+        summary_path = os.path.join(exp_dir, f"{server_tag}_summary.csv")
         with open(summary_path, 'w', newline='') as f:
             w = csv.DictWriter(f, fieldnames=list(summary_rows[0].keys()))
             w.writeheader()
@@ -223,15 +160,13 @@ def main():
 
     servers = args.servers or list(SERVER_SPECS.keys())
 
-    os.makedirs(RES_DIR, exist_ok=True)
-
     for server in servers:
         try:
             process_server(server)
         except Exception as e:
             print(f"  [ERR] {server}: {e}")
 
-    print(f"\nDone. Results in: {RES_DIR}")
+    print(f"\nDone. Results in: {EXP_BASE}")
 
 
 if __name__ == '__main__':
