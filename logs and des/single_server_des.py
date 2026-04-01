@@ -49,6 +49,17 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--dist",
+        choices=["lognormal", "gamma", "weibull"],
+        default="lognormal",
+        help=(
+            "Distribution used by parametric mode to sample service times. "
+            "'lognormal' (default): fits mu/sigma via log-space MLE. "
+            "'gamma': fits shape k and scale theta via method of moments. "
+            "Has no effect on replay or bootstrap modes."
+        ),
+    )
+    parser.add_argument(
         "--queue-capacity",
         type=int,
         default=None,
@@ -117,6 +128,57 @@ def ks_like_distance(obs, sim):
     return d
 
 
+def fit_gamma(service_ms):
+    """Return (shape k, scale theta) of gamma fit via method of moments.
+
+    k = mean² / variance  (shape, dimensionless)
+    theta = variance / mean  (scale, same units as service_ms)
+
+    Sampling: random.gammavariate(k, theta)
+    Mean = k * theta, Variance = k * theta², CV = 1/sqrt(k).
+    """
+    mean = statistics.fmean(service_ms)
+    var = statistics.variance(service_ms) if len(service_ms) > 1 else mean
+    var = max(var, 1e-12)  # guard against zero variance
+    k = (mean ** 2) / var
+    theta = var / mean
+    return k, theta
+
+
+def fit_weibull(service_ms):
+    """Return (scale alpha, shape k) of Weibull fit via method of moments.
+
+    Finds shape k by bisection on CV(k) = sqrt(Γ(1+2/k)/Γ(1+1/k)² - 1).
+    Then scale alpha = mean / Γ(1+1/k).
+
+    Sampling: random.weibullvariate(alpha, k)
+    Mean = alpha * Γ(1+1/k), CV = sqrt(Γ(1+2/k)/Γ(1+1/k)² - 1).
+    k > 1 → right-skewed, mode > 0 (like lognormal but with power-law tail cutoff).
+    k → ∞ → deterministic. k = 1 → exponential (CV=1). k < 1 → heavy-tailed.
+    """
+    mean = statistics.fmean(service_ms)
+    std = statistics.stdev(service_ms) if len(service_ms) > 1 else mean * 0.5
+    cv_target = std / mean if mean > 0 else 1.0
+    cv_target = max(cv_target, 1e-6)
+
+    def cv_of_k(k):
+        g1 = math.gamma(1.0 + 1.0 / k)
+        g2 = math.gamma(1.0 + 2.0 / k)
+        return math.sqrt(max(0.0, g2 / (g1 * g1) - 1.0))
+
+    # Bisect for k in [0.05, 500] — covers CV from ~20 down to ~0.04.
+    lo, hi = 0.05, 500.0
+    for _ in range(80):
+        mid = (lo + hi) / 2.0
+        if cv_of_k(mid) > cv_target:
+            lo = mid
+        else:
+            hi = mid
+    k = (lo + hi) / 2.0
+    alpha = mean / math.gamma(1.0 + 1.0 / k)
+    return alpha, k
+
+
 def fit_lognormal(service_ms):
     """Return (mu, sigma) of the lognormal fit to service_ms via log-space MLE."""
     log_vals = [math.log(max(v, 1e-9)) for v in service_ms]
@@ -150,7 +212,7 @@ def prepare_observed(rows):
     return arrivals_ns, service_ms, queue_ms, response_ms
 
 
-def simulate(arrivals_ns, observed_service_ms, mode, seed, queue_capacity=None):
+def simulate(arrivals_ns, observed_service_ms, mode, seed, queue_capacity=None, dist="lognormal"):
     """
     Simulate a single-server FCFS queue driven by observed arrival timestamps.
 
@@ -175,11 +237,24 @@ def simulate(arrivals_ns, observed_service_ms, mode, seed, queue_capacity=None):
         ]
 
     else:  # parametric
-        mu, sigma = fit_lognormal(observed_service_ms)
-        sampled_service_ms = [
-            math.exp(rng.gauss(mu, sigma))
-            for _ in observed_service_ms
-        ]
+        if dist == "gamma":
+            k, theta = fit_gamma(observed_service_ms)
+            sampled_service_ms = [
+                rng.gammavariate(k, theta)
+                for _ in observed_service_ms
+            ]
+        elif dist == "weibull":
+            alpha, k = fit_weibull(observed_service_ms)
+            sampled_service_ms = [
+                rng.weibullvariate(alpha, k)
+                for _ in observed_service_ms
+            ]
+        else:  # lognormal
+            mu, sigma = fit_lognormal(observed_service_ms)
+            sampled_service_ms = [
+                math.exp(rng.gauss(mu, sigma))
+                for _ in observed_service_ms
+            ]
 
     sim_queue_ms = []
     sim_response_ms = []
@@ -298,6 +373,7 @@ def main():
     sim_data = simulate(
         arrivals_ns, obs_service_ms, args.mode, args.seed,
         queue_capacity=args.queue_capacity,
+        dist=args.dist,
     )
 
     # Split sim results into admitted (served) and dropped.
@@ -320,7 +396,7 @@ def main():
     sim_s_summary    = summarize("sim_service_ms",   sim_svc_admitted)
 
     print(
-        f"input={input_path} mode={args.mode} seed={args.seed} "
+        f"input={input_path} mode={args.mode} dist={args.dist} seed={args.seed} "
         f"queue_offset={offset} queue_capacity={args.queue_capacity}"
     )
     print(
@@ -329,6 +405,15 @@ def main():
     )
     print(f"lognormal_fit: mu={mu_fit:.6f} sigma={sigma_fit:.6f} "
           f"implied_mean_ms={math.exp(mu_fit + 0.5*sigma_fit**2):.6f}")
+    k_fit, theta_fit = fit_gamma(obs_service_ms)
+    cv_fit = 1.0 / math.sqrt(k_fit) if k_fit > 0 else float("nan")
+    print(f"gamma_fit: k={k_fit:.6f} theta={theta_fit:.6f} "
+          f"implied_mean_ms={k_fit*theta_fit:.6f} implied_cv={cv_fit:.6f}")
+    alpha_fit, kw_fit = fit_weibull(obs_service_ms)
+    mean_w = alpha_fit * math.gamma(1.0 + 1.0 / kw_fit)
+    cv_w = math.sqrt(max(0.0, math.gamma(1.0 + 2.0/kw_fit) / math.gamma(1.0 + 1.0/kw_fit)**2 - 1.0))
+    print(f"weibull_fit: alpha={alpha_fit:.6f} k={kw_fit:.6f} "
+          f"implied_mean_ms={mean_w:.6f} implied_cv={cv_w:.6f}")
     print_summary("observed_response_ms",          obs_resp_summary)
     print_summary("sim_response_ms",               sim_resp_summary)
     print_summary("observed_queue_ms",             obs_q_summary)

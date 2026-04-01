@@ -49,6 +49,218 @@ services:
       - ./apache/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
       - "./logs and des:/app/logs"
 
+  apache-dsp:
+    image: php:8.3-apache
+    ports:
+      - "8083:80"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "256m"
+    stop_grace_period: 10s
+    environment:
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/dsp_aes_requests.csv
+    volumes:
+      - ./apache_dsp_aes:/var/www/html:ro
+      - ./apache_dsp_aes/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # node-dsp (port 8084)
+  # Architecture: single-threaded Node.js event loop.
+  # CPU-bound FIR blocks the loop → effective M/G/1 (one request at a time).
+  # Same DSP-AES pipeline as apache-dsp; different runtime.
+  # -------------------------------------------------------------------------
+  node-dsp:
+    build: ./node_dsp_aes
+    ports:
+      - "8084:3000"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "256m"
+    stop_grace_period: 10s
+    environment:
+      - PORT=3000
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/node_dsp_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # python-dsp (port 8085)
+  # Architecture: Gunicorn --workers 1 (single WSGI worker process).
+  # True M/G/1: one request runs at a time, others wait in OS accept queue.
+  # Same DSP-AES pipeline; Python runtime (slower, different service-time CV).
+  # -------------------------------------------------------------------------
+  python-dsp:
+    build: ./python_dsp_aes
+    ports:
+      - "8085:5000"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "256m"
+    stop_grace_period: 10s
+    environment:
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/python_dsp_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # java-dsp (port 8086)
+  # Architecture: Java HttpServer + fixed ThreadPoolExecutor (JAVA_WORKERS=4).
+  # True M/G/c: exactly c threads, shared queue — validates multi_server_des.py.
+  # Same DSP-AES pipeline; JVM runtime with JIT compilation.
+  # -------------------------------------------------------------------------
+  java-dsp:
+    build: ./java_dsp_aes
+    ports:
+      - "8086:3000"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "512m"
+    stop_grace_period: 10s
+    environment:
+      - PORT=3000
+      - JAVA_WORKERS=4
+      - JAVA_QUEUE_CAPACITY=1024
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/java_dsp_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # go-sqlite (port 8087)
+  # Architecture: Go single FCFS channel-queue worker (same as original Go server).
+  # Service: SQLite INSERT + SELECT — I/O-bound, not CPU-bound.
+  # Tests whether DES accuracy depends on service type or architecture.
+  # -------------------------------------------------------------------------
+  go-sqlite:
+    build: ./go_sqlite
+    ports:
+      - "8087:8080"
+    cpuset: "0"
+    cpus: "1.0"
+    mem_limit: "256m"
+    stop_grace_period: 10s
+    environment:
+      - PORT=8080
+      - JOB_QUEUE=1024
+      - SQLITE_PATH=/tmp/readings.db
+      - SQLITE_READ_ROWS=20
+      - CSV_LOG_PATH=/app/logs/go_sqlite_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # =========================================================================
+  # Multi-core variants (3 cores: cpuset=0,1,2  cpus=3.0)
+  # These validate M/G/c DES with c=3 workers.
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # node-dsp-mc (port 8088) — Node.js cluster, 3 worker processes
+  # Each worker is an independent event loop; OS distributes connections.
+  # Architecture: M/G/3 — 3 event loops, each blocking on FIR.
+  # -------------------------------------------------------------------------
+  node-dsp-mc:
+    build: ./node_dsp_aes
+    ports:
+      - "8088:3000"
+    cpuset: "0,1,2"
+    cpus: "3.0"
+    mem_limit: "512m"
+    stop_grace_period: 10s
+    environment:
+      - PORT=3000
+      - WORKERS=3
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/node_dsp_mc_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # python-dsp-mc (port 8089) — Gunicorn 3 workers
+  # Architecture: M/G/3 — 3 WSGI processes, each serialising one request.
+  # -------------------------------------------------------------------------
+  python-dsp-mc:
+    build: ./python_dsp_aes
+    ports:
+      - "8089:5000"
+    cpuset: "0,1,2"
+    cpus: "3.0"
+    mem_limit: "512m"
+    stop_grace_period: 10s
+    environment:
+      - PYTHON_WORKERS=3
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/python_dsp_mc_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # java-dsp-mc (port 8090) — Java ThreadPoolExecutor, 3 threads
+  # Architecture: M/G/3 — true thread-parallel, same as java-dsp but c=3.
+  # -------------------------------------------------------------------------
+  java-dsp-mc:
+    build: ./java_dsp_aes
+    ports:
+      - "8090:3000"
+    cpuset: "0,1,2"
+    cpus: "3.0"
+    mem_limit: "512m"
+    stop_grace_period: 10s
+    environment:
+      - PORT=3000
+      - JAVA_WORKERS=3
+      - JAVA_QUEUE_CAPACITY=1024
+      - DSP_SIGNAL_LENGTH=1024
+      - DSP_FILTER_TAPS=64
+      - DSP_CUTOFF_FREQ=0.25
+      - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      - DSP_TRACE_CSV=/app/logs/java_dsp_mc_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
+  # -------------------------------------------------------------------------
+  # go-sqlite-mc (port 8091) — Go SQLite, 3 worker goroutines
+  # Architecture: M/G/3 with I/O service (SQLite WAL, 3 connections).
+  # -------------------------------------------------------------------------
+  go-sqlite-mc:
+    build: ./go_sqlite
+    ports:
+      - "8091:8080"
+    cpuset: "0,1,2"
+    cpus: "3.0"
+    mem_limit: "256m"
+    stop_grace_period: 10s
+    environment:
+      - PORT=8080
+      - JOB_QUEUE=1024
+      - SQLITE_PATH=/tmp/readings.db
+      - SQLITE_READ_ROWS=20
+      - SQLITE_WORKERS=3
+      - CSV_LOG_PATH=/app/logs/go_sqlite_mc_requests.csv
+    volumes:
+      - "./logs and des:/app/logs"
+
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     ports:

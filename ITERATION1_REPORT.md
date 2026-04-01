@@ -667,6 +667,105 @@ M/G/1 queueing is happening. This is the file-lock contention signature.
 
 ---
 
+## Result 8 — DSP-AES Server: Real Computation, Near-Deterministic Service
+
+### What it shows
+How DES accuracy changes when service time comes from **real computation** (FIR filter
++ AES encryption) rather than a synthetic lognormal busy-loop, and when the server
+architecture is mpm_prefork (multiple workers competing for one CPU core).
+
+### Server pipeline
+
+Each POST /process request executes a two-stage pipeline:
+
+1. **FIR low-pass filter** (Hamming-windowed sinc, 1024 samples × 64 taps)
+   — 65,536 multiply-add operations in pure PHP. O(N×M) per request.
+2. **AES-256-CBC encryption** of the filtered signal (1024 × 4 bytes = 4096 bytes)
+   — via PHP `openssl_encrypt()`, hardware AES-NI accelerated.
+
+Service time is determined by the actual computation, not a timer-based busy-loop.
+
+### How to reproduce
+
+```bash
+# Start the container
+docker compose up -d apache-dsp
+
+# Single request test
+curl -X POST "http://localhost:8083/index.php?route=/process" \
+     -H "Content-Type: application/json" -d "{}"
+
+# Rate sweep
+python dsp_aes_load.py --rate 25 --duration 90 --seed 42
+```
+
+DES on a collected slice:
+```bash
+python "logs and des/single_server_des.py" \
+  --input  "logs and des/experiments/dsp_aes_25rps.csv" \
+  --output "logs and des/experiments/dsp_aes_25rps_des_replay.csv" \
+  --mode   replay --seed 42 --queue-offset 0.006
+```
+
+### Results
+
+| rate | n | tput | svc_p50 | svc_p99 | CV | resp_p99 | KS_replay | KS_boot | KS_para |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10  | 859  | 9.5  | 2.28 ms | 5.26 ms  | 0.278 | 5.77 ms  | 0.274 | 0.270 | 0.264 |
+| 25  | 2198 | 24.4 | 2.29 ms | 6.78 ms  | 0.349 | 7.07 ms  | 0.249 | 0.256 | 0.263 |
+| 50  | 4472 | 49.7 | 2.49 ms | 15.72 ms | 0.944 | 17.42 ms | 0.146 | 0.137 | 0.220 |
+| 75  | 6729 | 74.8 | 2.96 ms | 47.26 ms | 1.598 | 48.85 ms | 0.215 | 0.245 | 0.279 |
+| 100 | 8987 | 99.9 | 9.45 ms | 399.8 ms | 1.718 | 411.8 ms | 0.972 | 0.998 | 0.994 |
+
+### Findings
+
+**1. Near-deterministic service at low load (CV = 0.28–0.35).**
+At 10–25 rps, the FIR+AES computation dominates and service time is near-constant —
+much lower variance than the lognormal Go server (CV ≈ 0.5). This is the M/D/1-like
+regime: predictable computation, no resource contention.
+
+**2. DES KS is ~0.27 even at low load — worse than Go but for a different reason.**
+The DES fits a lognormal to the observed service times and simulates with that. But
+when CV = 0.28, the distribution is much tighter than lognormal — the DES over-predicts
+tail latency. The mismatch is a distribution shape error, not a queueing model error.
+KS ≈ 0.27 at 10 rps is the cost of assuming lognormal when service is near-deterministic.
+
+**3. Capacity knee at ~25–50 rps — earlier than Apache messaging (~30 rps).**
+Above 25 rps, mpm_prefork spawns multiple concurrent PHP workers all fighting for
+`cpuset: "0"` (one CPU core). The FIR convolution loop is CPU-intensive, so workers
+directly compete for cycles:
+
+| Rate | svc_mean | CV | What's happening |
+|---|---|---|---|
+| 10–25 rps | 2.5–2.7 ms | 0.28–0.35 | FIR+AES dominates, near-deterministic |
+| 50 rps | 3.3 ms | 0.94 | CPU contention between workers begins |
+| 75 rps | 5.8 ms | 1.60 | Workers thrashing on one core |
+| 100 rps | 51.9 ms | 1.72 | Full saturation — service times explode |
+
+**4. This is CPU contention, not file-lock contention.**
+Unlike Apache messaging (where lock wait is the bottleneck), here the bottleneck is
+multiple PHP processes competing for CPU time on a single core. The effect is similar
+(service times grow with rate, violating i.i.d. assumption) but the mechanism is different.
+Neither form of contention is visible to the M/G/1 DES.
+
+**5. KS = 0.97 at 100 rps — DES completely fails at saturation.**
+When workers are queuing for CPU, service times jump from ~3 ms to ~52 ms mean.
+The DES, trained on low-load service times (~2.5 ms), cannot predict this and produces
+completely wrong distributions.
+
+### Three-way server comparison
+
+| Server | Bottleneck | svc CV at low load | DES KS at low load | DES KS at saturation |
+|---|---|---|---|---|
+| Go (single worker) | M/G/1 arrival-rate queue | ~0.50 (lognormal) | **0.026** | 0.082–0.97 |
+| Apache messaging | File-lock contention | ~0.50 (synthetic) | 0.485 | 0.397 |
+| Apache DSP-AES | CPU contention (mpm_prefork) | **0.28** (near-deterministic) | 0.274 | **0.972** |
+
+The Go server is the only one where the M/G/1 DES model applies. Both Apache variants
+demonstrate scope conditions where it fails — for fundamentally different reasons.
+
+---
+
 ## Summary of Iteration 1 Findings
 
 | # | Finding | Evidence |
@@ -680,6 +779,8 @@ M/G/1 queueing is happening. This is the file-lock contention signature.
 | 7 | Parametric DES generalises poorly across saturation | 22 ms within regime; 198 ms across capacity boundary |
 | 8 | DES requires M/G/1-compatible system | Go KS ≈ 0.03; Apache KS ≈ 0.44 (file-lock contention) |
 | 9 | Queue-capacity drop model implemented | Go server logs 503 rejections; DES drops at capacity; not triggered in current setup (thread pool < 1024) |
+| 10 | Real-compute server (DSP-AES) violates lognormal assumption | CV = 0.28 at low load; KS ≈ 0.27 even at ρ < 15% |
+| 11 | mpm_prefork CPU contention causes service time explosion | svc_mean: 2.5 ms (10 rps) → 52 ms (100 rps); DES KS = 0.97 at saturation |
 
 ---
 

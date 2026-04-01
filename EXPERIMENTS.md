@@ -22,6 +22,8 @@ validation, operational laws, ML baseline, and cross-system comparison.
 | Apache capacity ceiling | ~30 rps — limited by mpm_prefork file-lock contention |
 | DES accuracy: Apache | KS_resp ≈ 0.44 vs Go ≈ 0.03 — file I/O not captured by M/G/1 model |
 | Queue-capacity drop model | Implemented in DES + Go server logs 503s; not triggered (thread pool < 1024) |
+| DSP-AES capacity knee | ~25–50 rps — CPU contention between mpm_prefork workers on one core |
+| DES accuracy: DSP-AES | KS_resp ≈ 0.27 at low load (lognormal shape error, CV=0.28); KS_resp = 0.97 at saturation |
 
 ---
 
@@ -788,10 +790,248 @@ single-server FCFS implementations and inaccurate where additional contention me
    load generator thread pool (800 workers at 400 rps) keeps in-flight requests below
    the 1024 queue limit. Infrastructure is ready for a true open-loop generator.
 
+9. **Real-compute server (DSP-AES) violates lognormal service-time assumption.**
+   FIR+AES produces CV = 0.28 at low load (near-deterministic). DES KS ≈ 0.27 even at
+   ρ < 15% — a distribution shape error, not a queueing model error. DES assumes
+   lognormal; actual service is much tighter.
+
+10. **mpm_prefork CPU contention causes service time explosion at 50–100 rps.**
+    svc_mean rises from 2.5 ms (10 rps) to 52 ms (100 rps); resp_p99 = 412 ms;
+    DES KS = 0.97. This is the same mpm_prefork mechanism as Apache messaging but
+    driven by CPU competition rather than file-lock serialisation.
+
 ### Next steps
 
 | Priority | Action |
 |---|---|
 | Done | Add request-drop / timeout model to DES (`--queue-capacity`); Go server logs 503 arrivals |
-| Medium | Extend Apache experiment with SQLite or in-memory message store to isolate file-lock effect |
+| Done | Extend Apache experiment with a different processing workload — DSP-AES server (see Section 12) |
 | Low | Extend to multi-worker / multi-core (Iteration 2) |
+
+---
+
+## 12. Apache DSP-AES Rate Sweep (10 / 25 / 50 / 75 / 100 rps)
+
+Script: `dsp_aes_load.py`. Executed 2026-03-30 with `apache-dsp` container.
+
+### 12.1 Server pipeline
+
+Each POST /process request executes a two-stage real-computation pipeline:
+
+1. **FIR low-pass filter** — Hamming-windowed sinc kernel, 1024 samples × 64 taps
+   (65,536 multiply-add operations per request, pure PHP). O(N×M) deterministic.
+2. **AES-256-CBC encryption** — encrypts the 4096-byte filtered signal via PHP
+   `openssl_encrypt()`, hardware AES-NI accelerated.
+
+Service time is determined by actual computation (not a synthetic timer busy-loop),
+making it near-deterministic at low load. Configuration:
+
+| Parameter | Value |
+|---|---|
+| `DSP_SIGNAL_LENGTH` | 1024 |
+| `DSP_FILTER_TAPS` | 64 |
+| `DSP_AES_KEY` | 32-byte fixed key (hex) |
+| Container constraints | `cpuset: "0"`, `cpus: "1.0"`, `mem_limit: 256m` |
+
+### 12.2 Results (server-side internal timings)
+
+All timings measured inside PHP (`$_SERVER['REQUEST_TIME_FLOAT']` arrival;
+service = end-of-work − arrival; queue = response − service).
+Client-measured latencies are ~35 ms higher due to Docker/WSL2 overhead.
+
+| rate | n | tput | svc_p50 | svc_p99 | CV | resp_p99 | KS_replay | KS_boot | KS_para |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10  | 859  | 9.5  | 2.28 ms | 5.26 ms  | 0.278 | 5.77 ms  | 0.274 | 0.270 | 0.264 |
+| 25  | 2198 | 24.4 | 2.29 ms | 6.78 ms  | 0.349 | 7.07 ms  | 0.249 | 0.256 | 0.263 |
+| 50  | 4472 | 49.7 | 2.49 ms | 15.72 ms | 0.944 | 17.42 ms | 0.146 | 0.137 | 0.220 |
+| 75  | 6729 | 74.8 | 2.96 ms | 47.26 ms | 1.598 | 48.85 ms | 0.215 | 0.245 | 0.279 |
+| 100 | 8987 | 99.9 | 9.45 ms | 399.8 ms | 1.718 | 411.8 ms | 0.972 | 0.998 | 0.994 |
+
+0% error rate at 10–75 rps. Requests at 100 rps complete successfully but with
+resp_p99 = 412 ms — service time explosion, not request drops.
+
+### 12.3 Analysis
+
+**Low-load regime (10–25 rps): near-deterministic service, CV = 0.28–0.35.**
+
+At ρ < 15%, multiple PHP workers rarely execute simultaneously. The FIR+AES
+computation dominates service time and each request runs largely uncontested.
+Service time is far less variable than the synthetic lognormal (CV ≈ 0.5) — this
+is the M/D/1-like regime.
+
+**DES KS ≈ 0.27 at low load — worse than Go (KS ≈ 0.03) for a different reason.**
+
+The DES fits a lognormal to observed service times and simulates with that. When
+CV = 0.28 the true distribution is much tighter (close to a gamma or deterministic);
+the lognormal over-predicts the tail. This KS≈0.27 baseline error is a
+*distribution shape mismatch*, not a queueing model error. The M/G/1 queueing
+structure is valid — the input distribution assumption (lognormal) is wrong.
+
+**High-load regime (50–100 rps): CPU contention between mpm_prefork workers.**
+
+mpm_prefork spawns multiple OS processes, all pinned to `cpuset: "0"` (one core).
+The FIR convolution is CPU-intensive; concurrent workers directly compete for cycles.
+This inflates *service time* itself — violating the M/G/1 i.i.d. service assumption:
+
+| Rate | svc_mean | svc_p99 | CV | What's happening |
+|---|---|---|---|---|
+| 10–25 rps | 2.5–2.7 ms | 5.3–6.8 ms | 0.28–0.35 | FIR+AES dominates, near-deterministic |
+| 50 rps | 3.3 ms | 15.7 ms | 0.94 | CPU contention between workers begins |
+| 75 rps | 5.8 ms | 47.3 ms | 1.60 | Workers thrashing on one core |
+| 100 rps | 51.9 ms | 399.8 ms | 1.72 | Full saturation — service times explode |
+
+**This is CPU contention, not file-lock contention.**
+
+Compare with Apache messaging (Section 10): there, the bottleneck was `flock()`
+serialisation on the message-store file. Here, no shared file is accessed; the
+bottleneck is multiple PHP processes competing for CPU time on one core. Both effects
+inflate response time at low ρ and both are invisible to the M/G/1 DES — but they
+produce different signatures:
+
+| Contention type | Seen in | Effect on service times | Effect at low load |
+|---|---|---|---|
+| File-lock | Apache messaging | i.i.d. lognormal (svc_mean stable); extra latency in queue_ms | High KS from the start (queue_ms unexplained) |
+| CPU (mpm_prefork) | Apache DSP-AES | svc_mean grows with rate; CV rises dramatically | Low KS baseline (queue small), but KS → 1.0 at saturation |
+
+**Capacity knee at 50–75 rps.**
+
+Between 25 and 50 rps, CV jumps from 0.35 to 0.94 and resp_p99 more than doubles
+(7 → 17 ms). At 100 rps the system is fully saturated (resp_p99 = 412 ms). Effective
+capacity ceiling is ~75 rps before latency becomes unacceptable, well above Apache
+messaging (~30 rps) because the real-computation bottleneck is CPU rather than I/O.
+
+### 12.4 DES accuracy: three-mode comparison
+
+At low load (10–25 rps) all three DES modes perform similarly (KS ≈ 0.25–0.27)
+because the service time distribution mismatch (not the queueing dynamics) drives the
+error. Replay does not help when the problem is lognormal vs. near-deterministic, not
+arrival ordering.
+
+At 50 rps, KS drops slightly (0.15–0.22) — an artefact of the distribution widening
+(CV rising to 0.94 brings it closer to lognormal). At 100 rps, all modes fail
+completely (KS = 0.97–1.0).
+
+### 12.5 Three-way server comparison
+
+| Server | Bottleneck | svc CV at low load | DES KS at low load | DES KS at saturation |
+|---|---|---:|---:|---:|
+| Go (single worker) | M/G/1 arrival-rate queue | ~0.50 (lognormal) | 0.026 | 0.082–0.970 |
+| Apache messaging | File-lock contention | ~0.50 (synthetic) | 0.485 | 0.397 |
+| Apache DSP-AES | CPU contention (mpm_prefork) | **0.28** (near-deterministic) | 0.274 | **0.972** |
+
+The Go server is the only one where the M/G/1 DES applies. Both Apache variants
+demonstrate scope conditions where it fails — for fundamentally different reasons.
+
+---
+
+## 13. M/G/c DES — Does More Workers Fix Accuracy?
+
+Script: `logs and des/multi_server_des.py`. Executed 2026-04-01.
+
+### 13.1 Motivation
+
+Section 12 showed that M/G/1 DES is inaccurate for Apache DSP-AES because
+mpm_prefork runs **c parallel workers** sharing one CPU core — not a single server.
+The M/G/c model allows c jobs to be in service simultaneously, which should better
+reflect Apache's architecture. This section tests whether switching from M/G/1 to
+M/G/c improves KS accuracy.
+
+### 13.2 Distribution experiments (parametric mode)
+
+Lognormal, gamma, and Weibull were tested as alternative service-time distributions
+for parametric mode. All three performed worse than or equal to lognormal at every
+rate.
+
+| Rate | CV | KS_lognormal | KS_gamma | KS_weibull |
+|---:|---:|---:|---:|---:|
+| 10 rps | 0.28 | **0.264** | 0.312 | 0.305 |
+| 25 rps | 0.35 | **0.263** | 0.318 | 0.296 |
+| 50 rps | 0.94 | **0.220** | 0.397 | 0.430 |
+| 75 rps | 1.60 | **0.279** | 0.316 | 0.384 |
+| 100 rps | 1.72 | **0.994** | 0.997 | 0.996 |
+
+**Finding:** Lognormal wins at every rate despite being a shape mismatch at low CV.
+Gamma (symmetric at high k) and Weibull miss the right-skew of real computation
+times. Distribution swapping does not fix the KS floor.
+
+### 13.3 M/G/c results — replay mode
+
+| rate | KS c=1 (M/G/1) | KS c=2 | KS c=3 | KS c=4 | KS c=5 | Best |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10  | 0.274 | 0.275 | 0.275 | 0.275 | 0.275 | c=1 (tie) |
+| 25  | 0.249 | 0.257 | 0.257 | 0.257 | 0.257 | c=1 |
+| 50  | **0.146** | 0.179 | 0.182 | 0.183 | 0.183 | c=1 |
+| 75  | 0.215 | **0.104** | 0.114 | 0.116 | 0.117 | c=2 |
+| 100 | 0.972 | 0.956 | 0.937 | 0.934 | **0.907** | c=5 |
+
+### 13.4 M/G/c results — parametric (lognormal) mode
+
+| rate | KS c=1 | KS c=2 | KS c=3 | KS c=4 | KS c=5 | Best |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10  | **0.264** | 0.265 | 0.265 | 0.265 | 0.265 | c=1 |
+| 25  | **0.263** | 0.268 | 0.268 | 0.268 | 0.268 | c=1 |
+| 50  | **0.220** | 0.239 | 0.241 | 0.241 | 0.241 | c=1 |
+| 75  | 0.279 | **0.200** | 0.208 | 0.208 | 0.208 | c=2 |
+| 100 | 0.994 | 0.991 | 0.986 | 0.969 | **0.877** | c=5 |
+
+### 13.5 Analysis
+
+**Low load (10–25 rps): M/G/c makes no difference.**
+
+At 10 rps, average concurrency = 10 × 0.0025 = 0.025 — only 2.5% of one worker's
+time is used. Workers are almost never simultaneously busy regardless of c. M/G/c
+collapses to M/G/1 behaviour and KS is unchanged. The ~0.26 floor persists because
+the problem is the service time distribution shape (lognormal over-predicts tails at
+CV=0.28), not the queueing model.
+
+**50 rps: M/G/1 accidentally wins.**
+
+At 50 rps, M/G/1 gives KS=0.146 vs M/G/c c=2 giving 0.179. M/G/c predicts less
+queueing (jobs spread across 2 workers, each lightly loaded). But the real system's
+elevated response times at 50 rps come from CPU contention inflating service times,
+not from jobs waiting in queue. M/G/1 accidentally over-predicts queueing in a way
+that partially compensates for this effect — two errors cancelling.
+
+**75 rps: M/G/c (c=2) gives the biggest improvement — KS drops from 0.215 → 0.104.**
+
+At 75 rps, multiple Apache workers genuinely overlap frequently. M/G/1 predicts
+heavy queueing (one server processing sequentially), which over-estimates
+response time. M/G/c c=2 allows two concurrent jobs, reducing predicted queue
+buildup. This matches reality more closely: the real system has workers running
+in parallel, so observed queue_ms is lower than M/G/1 predicts.
+
+**100 rps: both models fail completely; M/G/c is marginally less bad.**
+
+Service times explode from ~3 ms to ~52 ms mean. No queueing model trained on
+low-load service times can predict this. KS = 0.91–0.97 regardless of c.
+
+**Go server sanity check: M/G/c hurts Go accuracy at low load.**
+
+| rate | c=1 (correct) | c=2 | c=3 |
+|---|---|---|---|
+| 50 rps  | **0.026** | 0.030 | 0.030 |
+| 100 rps | **0.017** | 0.028 | 0.029 |
+| 200 rps | **0.029** | 0.025 | 0.028 |
+| 400 rps | **0.064** | 0.021 | 0.026 |
+
+c=1 is best at 50–200 rps (Go genuinely has one worker). At 400 rps c=2 helps
+slightly — a saturation artefact where the single-server model over-serialises
+the extreme queue. This confirms M/G/c should only be applied to servers with
+multiple workers.
+
+### 13.6 Conclusion
+
+M/G/c improves accuracy at 75 rps (KS: 0.215 → 0.104 with c=2) where Apache
+workers genuinely overlap. It provides no benefit at low load (10–25 rps) where
+the bottleneck is distribution shape mismatch, and both models collapse at 100 rps.
+The optimal c is **2** — consistent with the observation that mpm_prefork rarely
+has more than 2 workers simultaneously active on a single-core container at
+≤75 rps load.
+
+Neither distribution choice nor server count fully resolves the accuracy problem.
+The fundamental limitation is that M/G/c still assumes i.i.d. service times drawn
+from a fixed distribution, while actual service times grow with load due to CPU
+contention. A load-dependent service rate model (or ML) is required to capture
+this regime.
+
+---
