@@ -132,6 +132,66 @@ degradation earlier due to contention or service time growth.
 
 ---
 
+## Progress Against Thesis A Plan
+
+Thesis A (submitted November 2025) laid out six work strands for Thesis B and C.
+The table below tracks what was promised, what was delivered — including work that
+went beyond the plan — and what remains open.
+
+### Strand 1 — Experimental platform
+
+| | Detail |
+|---|---|
+| **Promised** | Finalise Docker microservice; automate Vegeta load generation; stand up cAdvisor / Prometheus / Grafana observability stack; collect traces of arrival rates, service times, CPU utilisation, and tail latency across a range of loads and CPU quotas |
+| **Delivered** | Docker Compose platform with CPU pinning (`cpuset`, `cpus`) confirmed working. Custom open-loop Poisson load generators written in Python replace Vegeta — these emit requests with exponential inter-arrival times which directly satisfy the M/G/c arrival assumption, whereas Vegeta enforces a fixed schedule. Server-side CSV logging (`arrival_unix_ns`, `service_ms`, `queue_ms`, `response_ms`, `status_code`) records all three timing components per request, giving more information than Vegeta's client-side latency reports. |
+| **Beyond plan** | Platform expanded from one echo-server to **seven distinct server implementations** across five languages (Go, PHP/Apache, Node.js, Python, Java) plus a Go SQLite I/O-bound variant — totalling **11 server configurations** (7 single-core, 4 three-core). cAdvisor/Prometheus/Grafana stack was dropped in favour of server-side instrumentation: simpler to operate on a laptop, and provides the service-time decomposition that Prometheus cannot. |
+| **Remaining** | CPU throttling telemetry (cgroup counters, throttle fraction) and error-budget burn-rate tracking — mentioned in §4.4 as future integration during Thesis B — have not been implemented. These would allow modelling of noisy-neighbour CPU contention effects. |
+
+### Strand 2 — Single-server DES modelling and calibration
+
+| | Detail |
+|---|---|
+| **Promised** | Build a baseline M/G/1 DES that reproduces measured behaviour under fixed load. Calibrate using empirical arrival rate λ and service-time samples. Validate against observed mean response time and utilisation. |
+| **Delivered** | `logs and des/single_server_des.py` implements a trace-driven M/G/1 FCFS simulator with three service-time modes. The KS distance between the simulated and observed response-time CDFs is used as the primary accuracy metric. Operational law checks (Utilisation Law `U = XS`, Little's Law `N = XR`) are computed and reported. |
+| **Beyond plan** | Three validation modes (replay / bootstrap / parametric) were not in the original plan. Replay isolates queueing-model accuracy from distribution-fit error; bootstrap quantifies sensitivity to sample variance; parametric tests the lognormal/gamma/Weibull assumption. This decomposition allows the source of any KS degradation to be diagnosed precisely — something the plan did not anticipate needing. The goroutine scheduling floor (`--queue-offset 0.006 ms`) was identified and corrected as a systematic measurement artefact. |
+| **Remaining** | Validation against purely analytical M/M/1 and Pollaczek–Khinchine (P-K) formula predictions has not been done explicitly. The plan called for comparing DES against analytical baselines; currently DES is only compared against ground truth and against the ML polynomial regression baseline. |
+
+### Strand 3 — Multi-server and multicore DES extensions
+
+| | Detail |
+|---|---|
+| **Promised** | Extend the simulator to M/M/c or M/G/c cases modelling multiple service threads or container replicas. Incorporate simple CPU throttling models to capture noisy-neighbour effects at higher utilisation. |
+| **Delivered** | `logs and des/multi_server_des.py` implements a heap-based M/G/c event-driven simulator supporting arbitrary worker counts. Four server configurations run with `c = 3` workers (Node.js cluster, Gunicorn, Java ThreadPool, Go SQLite WAL). The DES is validated against all four using the same three modes as the single-server case. |
+| **Beyond plan** | The multi-core experiments revealed that throughput scaling is architecture-dependent (Python 3.0×, Go SQLite 2.2×, Node.js 2.3×) and that DES accuracy in the multi-core setting is entirely determined by service-time distribution shape rather than worker count. This was not a hypothesis in the plan — it emerged from the data. |
+| **Remaining** | CPU throttling models (noisy-neighbour effects at high utilisation) have not been incorporated into the DES engine. The plan explicitly listed this; it remains open. |
+
+### Strand 4 — Machine-learning models for service time and workload
+
+| | Detail |
+|---|---|
+| **Promised** | Train ML models to (i) learn empirical service-time distributions as a function of CPU quota and request rate using KDE, Gaussian mixture models, or gradient-boosted regressors; and (ii) forecast arrival rates λ(t) from historical monitoring data using ARIMA or gradient boosting. Feed these into the DES engine. |
+| **Delivered** | `ml_baseline.py` fits a polynomial regression model to predict `response_p99` from arrival rate using leave-one-out cross-validation (LOOCV), establishing an ML accuracy baseline for comparison with DES. The key finding — DES outperforms ML at light load (rho < 0.3) while ML outperforms DES near saturation — is quantified. |
+| **Remaining** | The full ML programme described in the plan has not been implemented: no KDE or GMM service-time models, no gradient-boosted regressors, and no arrival-rate forecasting (ARIMA or otherwise). `ml_baseline.py` is a comparison tool, not the ML pipeline the plan described. This is the largest gap between plan and delivery. |
+
+### Strand 5 — Hybrid ML–DES integration and evaluation
+
+| | Detail |
+|---|---|
+| **Promised** | Integrate ML-estimated service-time distributions and forecasted arrivals into the DES engine. Evaluate prediction of mean latency, utilisation, and tail behaviour (p95/p99) under varying load and resource scenarios. Compare against purely analytical and purely ML baselines. |
+| **Delivered** | Not implemented. ML and DES remain separate tools. The comparison between them uses ground-truth traces rather than an integrated pipeline. |
+| **Remaining** | The full hybrid ML–DES pipeline is unbuilt. This is the central deliverable of Thesis B/C and the most industrially novel contribution described in Thesis A. It requires completing Strand 4 first. |
+
+### Strand 6 — Educational artefacts and thesis consolidation
+
+| | Detail |
+|---|---|
+| **Promised** | Design lab scripts, exercises, and visualisations for COMP9334 students to reproduce experiments on their own machines. Draft and refine thesis chapters (results, discussion, conclusions). |
+| **Delivered** | The repository is structured to be fully reproducible on any machine with Docker Desktop and Python 3.10+. Every experiment folder contains a `README.md` with a results table, CDF plot, and interpretation notes auto-generated by `write_server_readmes.py`. All load generators, DES scripts, and sweep orchestrators are documented with exact commands in the root README. |
+| **Beyond plan** | CDF visualisations comparing observed vs simulated distributions (replay, bootstrap, parametric) with annotated KS arrows were not mentioned in the plan. Per-server READMEs with expected KS ranges and diagnostic guidance were also not planned — they emerged from the need to interpret results across 11 configurations. |
+| **Remaining** | Formal COMP9334 lab scripts (worksheets with guided questions) have not been written. The plan called for exercises that walk students through queueing-theoretic interpretation of the results; these do not yet exist as standalone teaching documents. Thesis B/C chapters (results, discussion, conclusions) are not drafted. |
+
+---
+
 ## Servers Under Test
 
 All containers run on Docker Compose. Single-core variants pin to `cpuset=0,
