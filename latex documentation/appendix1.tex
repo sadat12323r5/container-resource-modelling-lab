@@ -1,0 +1,26 @@
+\chapter{Appendix 1: Experimental Materials}\label{app1}
+
+\section{Docker Compose Environment}
+This appendix contains the full configuration for the containerised
+experimental platform, including the HTTP echo service, cAdvisor,
+Prometheus, Grafana, and supporting components.
+
+\section{Workload Generation Scripts}
+The following scripts were used to generate open-loop workloads using
+Vegeta for all experiments reported in this thesis.
+
+\section{Metrics Extraction and Processing}
+Raw metrics were collected from cAdvisor and processed using Python
+scripts to compute service demands, visit ratios, utilisation, and
+latency percentiles.
+
+
+\section{Supplementary Figures}
+Additional plots and figures referenced in Chapter~\ref{ch:eval} but not
+included in the main text due to space constraints.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{extra_latency_plot.pdf}
+    \caption{Detailed latency distribution across workloads.}
+\end{figure}

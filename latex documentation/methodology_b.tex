@@ -1,0 +1,142 @@
+\chapter{Experimental Platform and Multi-Server Methodology}
+\label{ch:methodology_b}
+
+\section{Overview}
+
+Thesis~A established that a single Dockerised microservice can exhibit realistic capacity-planning phenomena — growing mean latency, sharp tail-latency amplification, and eventual CPU saturation — on commodity hardware. Thesis~B expands that foundation into a systematic, multi-server experimental programme. Nine distinct server implementations across five languages and two concurrency configurations are subjected to open-loop load testing at a range of arrival rates, and the resulting traces are used both to challenge and to extend classical M/G/$c$ queueing assumptions.
+
+The core research question that emerged from this expanded programme is:
+
+\begin{quote}
+\emph{Does the M/G/$c$ model's constant-service-time assumption hold for real containerised microservices, and if not, how can the model be corrected?}
+\end{quote}
+
+The answer — that mean service time grows with utilisation for CPU-bound servers — constitutes the central modelling contribution of this thesis.
+
+%-------------------------------------------------------------
+\section{Server Catalogue}
+\label{sec:server-catalogue}
+
+Nine server types were deployed, covering a representative cross-section of language runtimes, concurrency models, and workload characteristics. Table~\ref{tab:server-catalogue} summarises the configuration of each.
+
+\begin{table}[h]
+\centering
+\caption{Server implementations used in Thesis~B experiments. Column $c$ is the number of concurrent workers modelled in the M/G/$c$ DES.}
+\label{tab:server-catalogue}
+\begin{tabular}{l l c l}
+\toprule
+\textbf{Tag} & \textbf{Language / Stack} & \textbf{$c$} & \textbf{Notes} \\
+\midrule
+Apache DSP (1c)   & PHP via Apache \texttt{mpm\_prefork} & 1 & One OS process per connection \\
+Apache MSG (1c)   & PHP via Apache \texttt{mpm\_prefork} & 1 & Message-passing variant \\
+Go lognormal (1c) & Go (goroutines)                     & 1 & CPU-bound arithmetic task \\
+Go SQLite (1c)    & Go + SQLite                         & 1 & I/O-bound database reads \\
+Java DSP (1c)     & Java (JVM, JIT)                     & 4 & Thread pool; JIT warmup present \\
+Node DSP (1c)     & Node.js (single event loop)         & 1 & Non-blocking async handlers \\
+Python DSP (1c)   & Python (GIL-constrained)            & 1 & Global interpreter lock enforced \\
+Python DSP (3c)   & Python (3 worker processes)         & 3 & 3 independent processes \\
+Node DSP (3c)     & Node.js cluster (3 workers)         & 3 & \texttt{cluster} module, Bernoulli splitting \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each server was deployed as a Docker container with CPU resources pinned using both \texttt{--cpuset-cpus} and \texttt{--cpus} flags to enforce hard resource limits and prevent OS scheduling interference from other cores. This is critical: without \texttt{--cpuset-cpus}, the container scheduler may migrate threads across physical cores, masking throttling effects.
+
+%-------------------------------------------------------------
+\section{Load Generation and Trace Collection}
+\label{sec:load-gen}
+
+\subsection{Open-Loop Load Testing with Vegeta}
+
+All experiments use Vegeta in open-loop mode: requests are issued at a fixed rate $\lambda$ (req/s) independently of server response times. This is the correct choice for studying queueing behaviour, because open-loop generation allows the queue to grow naturally under load, whereas closed-loop generation would cap the effective arrival rate and mask saturation.
+
+For each server, experiments were run at a range of arrival rates from low load ($\rho \approx 0.1$) up to near-saturation ($\rho \approx 0.9$). Saturated traces ($\rho > 0.92$) were excluded from model fitting to avoid artefacts from dropped or rejected requests.
+
+\subsection{Trace Format}
+
+Each experiment produces a per-request CSV trace with the following columns:
+
+\begin{itemize}
+    \item \texttt{arrival\_unix\_ns} — absolute arrival timestamp in nanoseconds;
+    \item \texttt{response\_ms} — end-to-end response time observed by the client;
+    \item \texttt{service\_ms} — server-side processing time (measured within the handler using high-resolution timers where available);
+    \item \texttt{queue\_ms} — inferred queueing delay (\texttt{response\_ms} $-$ \texttt{service\_ms});
+    \item \texttt{status\_code} — HTTP status; non-2xx rows are excluded from analysis.
+\end{itemize}
+
+\subsection{Summary Statistics}
+
+For each server $\times$ rate combination, a summary CSV records aggregate statistics computed from the trace: \texttt{rate\_rps}, \texttt{mean\_resp\_ms}, \texttt{mean\_svc\_ms}, \texttt{rho} ($= \lambda \cdot E[S] / (c \cdot 1000)$), and tail-latency percentiles. These summaries serve as the primary input to the service-time model-fitting step.
+
+%-------------------------------------------------------------
+\section{Concurrency Models}
+\label{sec:concurrency}
+
+A key design decision in applying M/G/$c$ is determining the correct value of $c$ — the number of parallel servers — for each implementation.
+
+\paragraph{Apache \texttt{mpm\_prefork}.}
+Each incoming HTTP connection spawns a dedicated OS process. When the container is pinned to a single CPU core, these processes compete for the core through OS preemption: the kernel time-slices among all active handler processes. This is a Processor Sharing (PS) discipline at the OS level, even though the application sees FCFS at the queue. The effective concurrency is $c = 1$ (one physical core), but the OS interleaves service among multiple simultaneous requests.
+
+\paragraph{Go goroutines.}
+The Go runtime multiplexes goroutines onto $\texttt{GOMAXPROCS}$ OS threads. With one pinned core, Go schedules goroutines cooperatively with preemption points, creating similar OS-level time-sharing to Apache but with lower context-switch overhead. $c = 1$.
+
+\paragraph{Python GIL.}
+The Global Interpreter Lock serialises Python bytecode execution: only one thread runs Python at a time. This effectively serialises service even when multiple threads are present. $c = 1$.
+
+\paragraph{Node.js single process.}
+The Node.js event loop is inherently single-threaded. $c = 1$. The 3-worker variant uses the \texttt{cluster} module, which forks three independent Node.js processes. The OS load-balances incoming connections across workers by Bernoulli splitting (roughly uniform), making this architecturally equivalent to three independent M/G/1 queues in parallel, \emph{not} a shared-queue M/G/3 system.
+
+\paragraph{Java thread pool.}
+The JVM maintains a thread pool of 4 worker threads. All threads share the CPU core, again creating OS-level time-sharing. $c = 4$ in the M/G/$c$ model.
+
+The distinction between OS-level Processor Sharing (the physical reality) and application-level FCFS (the queueing abstraction) is central to understanding why service times grow with utilisation, as detailed in Chapter~\ref{ch:loaddep}.
+
+%-------------------------------------------------------------
+\section{Simulation Infrastructure}
+\label{sec:des-infra}
+
+\subsection{Batch Replay DES}
+
+The core DES engine (\texttt{run\_des} in \texttt{des\_load\_dependent.py}) operates in \emph{replay mode}: it consumes the exact arrival sequence from an observed trace and produces a simulated response-time distribution by sampling service times from the fitted model.
+
+\begin{enumerate}
+    \item For each arrival at time $t_i$, assign it to the worker $s^* = \arg\min_s \texttt{free\_at}[s]$.
+    \item Compute start time: $\texttt{start} = \max(t_i,\, \texttt{free\_at}[s^*])$.
+    \item Sample service time: $\texttt{svc} \sim \text{Lognormal}(S_\text{eff}, \text{CV})$.
+    \item Update $\texttt{free\_at}[s^*] = \texttt{start} + \texttt{svc}$.
+    \item Record response time $\texttt{free\_at}[s^*] - t_i$.
+\end{enumerate}
+
+This replay approach removes arrival-process modelling error: both observed and simulated sequences share the same inter-arrival times, so any difference in the CDF is attributable solely to the service-time model. Five independent runs (differing only in the random seed for service-time sampling) are merged to reduce sampling variance.
+
+\subsection{Lognormal Service Time Parameterisation}
+
+Service times are sampled from a Lognormal distribution parameterised by mean $\mu_S$ and coefficient of variation $\text{CV}$:
+
+\[
+\sigma^2 = \ln(1 + \text{CV}^2), \qquad
+\mu = \ln\mu_S - \tfrac{\sigma^2}{2}.
+\]
+
+The CV is estimated once per server from the lowest-load trace (where queueing delay is negligible and the observed response-time distribution approximates the service-time distribution). It is held fixed across all load levels, capturing the shape of the service-time distribution while the mean $\mu_S$ varies with load.
+
+\subsection{Validation Metric: KS Distance}
+
+The Kolmogorov–Smirnov (KS) distance between two empirical distributions $F_1$ and $F_2$ is:
+
+\[
+d_\text{KS} = \sup_x |F_1(x) - F_2(x)|.
+\]
+
+A two-pointer $O(n + m)$ implementation operating on pre-sorted arrays is used. Lower KS distance indicates better agreement between the simulated and observed response-time CDFs. The improvement $\Delta = d_\text{KS}(\text{std}) - d_\text{KS}(\text{LD})$ is the primary figure of merit for evaluating the load-dependent model.
+
+\subsection{Interactive Visualiser}
+
+A browser-based visualiser (\texttt{visualiser.html}) allows interactive exploration of simulation results. Features include:
+
+\begin{itemize}
+    \item real-time DES with adjustable arrival rate $\lambda$, worker count $c$, mean service time, and CV;
+    \item CSV trace loader: uploading an experiment trace overlays the observed CDF and displays the KS distance;
+    \item Gantt timeline panel: replays the loaded trace with server assignment shown as coloured bars, with a DES shadow for comparison;
+    \item live experiment mode: a WebSocket backend (\texttt{vis\_server.py}) fires real HTTP requests at any running Docker server and streams per-request timings into the browser in real time.
+\end{itemize}

@@ -1,0 +1,106 @@
+\chapter{Background}\label{ch:background}
+
+For the purpose of this thesis, it was necessary for us to go through some of the content from the course COMP9334, which I have compiled below.
+
+\section{Capacity Planning Concepts}
+
+Capacity planning concerns predicting how a system will perform under
+different workloads and determining the resources needed to meet service
+objectives. Key terminology includes:
+
+\begin{itemize}
+    \item \textbf{Throughput} ($X$): the rate at which a system completes work.
+    \item \textbf{Service demand} ($D$): the total service time a job
+          requires from a resource.
+    \item \textbf{Utilisation} ($U$): the fraction of time a resource is busy.
+    \item \textbf{Bottleneck device}: the resource with the largest
+          service demand, which limits maximum throughput.
+    \item \textbf{Saturation}: the point at which utilisation approaches
+          100\%, causing rapid growth in response time.
+\end{itemize}
+
+These concepts provide the foundation for evaluating system behaviour
+before, during, and after load increases.
+
+\section{Queueing Theory Foundations}
+
+Queueing theory models how jobs compete for shared resources. A queue is
+typically denoted using \emph{Kendall notation}, such as M/M/1, where:
+
+\begin{itemize}
+    \item the first letter describes the arrival process (M = memoryless / Poisson),
+    \item the second describes the service-time distribution 
+          (M = exponential, G = general),
+    \item the final value indicates the number of servers (1, $c$, etc.).
+\end{itemize}
+
+For an M/M/1 queue, arrival rate $\lambda$ and service rate $\mu$ yield:
+
+\[
+\rho = \frac{\lambda}{\mu}, \qquad R = \frac{1}{\mu - \lambda},
+\]
+
+where $\rho$ is utilization and $R$ is mean response time.  
+Systems remain stable only when $\rho < 1$.
+
+The M/M/$c$ and M/G/1 models generalize these results to multiple servers
+and general service-time distributions. For M/G/1, the Pollaczek–Khinchine
+formula characterizes mean waiting time based on the first two moments of
+service time.
+
+\section{Operational Laws}
+
+Operational analysis provides model-free relationships that hold for any
+stable system:
+
+\begin{itemize}
+    \item \textbf{Utilisation Law}:\quad $U = X S$
+    \item \textbf{Little’s Law}:\quad $N = X R$
+    \item \textbf{Forced Flow Law}:\quad $X(j) = V(j) X$
+\end{itemize}
+
+Here $S$ is the mean service time, $R$ is the mean response time, $N$ is the mean
+number of jobs in the system, and $V(j)$ is the visit ratio of device $j$.
+These laws enable service-demand extraction and consistency checking
+using measured performance data. By collecting performance data and creating queueing network models, operational analysis helps identify bottlenecks and forecast system behavior before deployment, improving design decisions.
+
+\section{Discrete-Event Simulation}
+
+Many systems cannot be solved analytically, such as queues with general
+inter-arrival distributions, complex scheduling policies, or multiple
+interacting resources. In such cases, \textbf{discrete-event simulation
+(DES)} provides an alternative.
+
+A DES model tracks the system over time by processing events such as job
+arrivals, service completions, and state transitions. Core components of
+a DES include:
+
+\begin{itemize}
+    \item a simulation clock,
+    \item event list (future events),
+    \item queues and servers,
+    \item random variate generation for arrival and service times.
+\end{itemize}
+
+DES is used when:
+
+\begin{itemize}
+    \item analytical models (e.g.\ G/G/1) have no closed-form solutions,
+    \item service-time or arrival distributions deviate from ideal assumptions,
+    \item the system contains multiple interacting bottlenecks or
+          resource constraints.
+\end{itemize}
+
+While flexible, DES requires a careful choice of parameters, warm-up
+periods, run lengths, and variance-reduction techniques to ensure
+statistically reliable results.
+
+\section{Previous Work}
+
+Teaching-oriented literature on capacity planning commonly introduces
+queuing models, operational laws, and simulation methods as the core
+toolkit for analyzing system performance. Foundational texts emphasize
+reproducible modeling techniques, service-demand extraction, and
+comparison of analytical predictions with simulation results. These
+methods form the theoretical basis upon which later practical and
+experimental work can be built. Now we are going to examine some of the experimental work and industrial practices that have directed my thesis.

@@ -1,0 +1,156 @@
+\chapter{Research Journey: Difficulties, Pivots, and Discoveries}
+\label{ch:journey}
+
+\section{Overview}
+
+The modelling contributions described in Chapters~\ref{ch:methodology_b} and~\ref{ch:loaddep} did not emerge from a predetermined plan. They emerged from a sequence of failures, measurement errors, and unexpected observations — each of which forced a reassessment of what the system was actually doing. This chapter documents that process. It is organised into five phases that reflect how the work actually evolved, not how it might be presented in a clean retrospective.
+
+The central finding of this thesis — that service time grows with utilisation in CPU-bound servers — was not a hypothesis tested by design. It was noticed as an anomaly in raw summary data, investigated as a potential measurement error, and only confirmed as a real phenomenon after ruling out several other explanations. Understanding how that discovery happened, and what had to be fixed first to make it visible, is part of the scientific record.
+
+%-------------------------------------------------------------
+\section{Phase 1: Initial Platform Setup (October 2025 -- January 2026)}
+\label{sec:journey-phase1}
+
+\subsection{D-01: Service Demand vs Wall-Clock Time}
+
+The first version of the Go server measured service time as the total wall-clock duration of the entire HTTP request handler: from when the handler function was entered to when the response was written. This included reading the request body, executing the computation, and writing the response to the TCP socket.
+
+The consequence was that measured service times were far larger than the actual CPU work, and varied with payload size and client-side network latency — neither of which should affect service demand in a queueing model. When these inflated values were fed into the DES, predicted response times were unrealistically high and the utilisation estimates were wrong.
+
+The fix was conceptually simple but had an important implication: \emph{service time and response time are not the same thing}. Service time in a queueing context is the time a request occupies the server resource (the CPU), not the time between the request arriving at the process and the reply leaving the socket. All subsequent server implementations were instrumented to record time only around the computation kernel, excluding I/O. This distinction — demand vs.\ wall-clock — is not always obvious from textbook definitions and became a recurring source of care throughout the instrumentation work.
+
+\subsection{D-02: Apache Routing Misconfiguration}
+
+The first Apache PHP server returned HTTP~200 for every request regardless of whether the PHP script executed. The default VirtualHost was serving Apache's static default page rather than the PHP application. Because load-testing tools check status codes rather than response bodies, and 200~OK is correct, the misconfiguration went undetected for an entire round of experiments.
+
+The symptom that eventually revealed the problem was suspicious: Apache response times were around 0.1~ms, whereas all other servers took 2--5~ms for the same computation. At first this looked like PHP being orders of magnitude faster than Go; on inspection it was the static file handler returning a cached HTML page in microseconds. The fix required a correct VirtualHost configuration pointing \texttt{DocumentRoot} to the PHP application and enabling \texttt{mod\_php}. A \texttt{/health} endpoint was added to every server thereafter, returning the measured service time, so a 1-request sanity check before any load run could confirm the intended workload was executing.
+
+\subsection{D-03: CPU Pinning Not Enforced}
+
+The experimental design assumed each single-core server occupied exactly one CPU core. Early Docker Compose files set only \texttt{cpus: "1.0"}, which limits the \emph{proportion} of CPU time the container may use but does not pin it to a specific physical core. On a multi-core host, the container scheduler could still migrate threads between cores between scheduling quanta. This meant the Go server — which spawned multiple goroutines — appeared to saturate at a much higher arrival rate than an M/G/1 model would predict for a single core.
+
+The fix was to add \texttt{cpuset: "0"} to every single-core service, forcing the container to run exclusively on core~0. For three-worker configurations, \texttt{cpuset: "0,1,2"} was used. After this change, results became reproducible across machines and the capacity knee matched M/G/1 predictions at the expected utilisation.
+
+The lesson was broader than just CPU pinning: Docker resource limits are not the same as resource isolation. Container ``1-core'' configuration is a scheduling weight, not a hardware boundary, unless \texttt{cpuset} is also set.
+
+%-------------------------------------------------------------
+\section{Phase 2: Instrumentation and Logging (February -- March 2026)}
+\label{sec:journey-phase2}
+
+\subsection{D-04: PHP Has No Direct Post-Response Hook}
+
+PHP running under Apache \texttt{mpm\_prefork} executes a script and returns the response, but there is no native hook that fires \emph{after} the response bytes leave the socket. The standard approach of recording \texttt{microtime()} at the end of the script captures time before the response is fully written to the network buffer, not after. This meant that for Apache, the decomposition of response time into \texttt{queue\_ms} (waiting for a free process) and \texttt{service\_ms} (computation) could not be measured directly.
+
+The resolution used PHP's \texttt{register\_shutdown\_function()} to log metrics after script execution completes, and \texttt{hrtime(true)} for nanosecond-resolution timing of the computation block itself. Queue time was then derived as \texttt{response\_ms\,--\,service\_ms}. This is an approximation: the derived \texttt{queue\_ms} absorbs any overhead between request acceptance and script execution start (Apache process selection, connection handling), and any overhead between script end and socket write. This is a known measurement artefact that explains a systematic discrepancy discussed in D-08.
+
+\subsection{D-05: CSV Corruption Under Concurrent Writes}
+
+Multiple Apache worker processes wrote to the same CSV log file simultaneously. Without file locking, rows were interleaved mid-line: a partial row from one process would be followed by the start of a row from another process, producing lines with wrong field counts or corrupted timestamps. At 75~rps with eight or more concurrent workers, this happened frequently enough to lose 5--10\% of records per run.
+
+The fix was to add \texttt{flock(\$fp, LOCK\_EX)} before every \texttt{fwrite()} call, serialising writes across processes. This introduced a side effect discovered later: at high load, processes queue for the write lock, holding the CPU while waiting. This added a small but consistent overhead to every request's shutdown function execution time, contributing to the already-derived \texttt{queue\_ms} values being slightly inflated even at low load — compounding the artefact from D-04.
+
+\subsection{D-06: Go Server Silently Dropping Requests}
+
+The Go server used a bounded channel as its internal job queue with a capacity of 1024 entries. When the channel was full, new requests were rejected with HTTP~503. The load generator at the time recorded these as valid responses (status 503, near-zero response time) and included them in the CSV. The effect was that near the saturation point, the tail of the response-time distribution appeared to compress rather than expand — the opposite of what queueing theory predicts — because fast 503 rejections were being counted alongside slow queued responses.
+
+The fix was to log rejections separately with a \texttt{rejected=true} flag and filter \texttt{status\_code} in all analysis scripts to include only 2xx responses. A rejection counter was added to the server metrics. This fix revealed that the saturation point (where rejections begin) was at a lower arrival rate than initially measured, and that the true p99 latency at high load was substantially higher than the unfiltered figures had suggested. Any capacity analysis that ignores rejection rates is meaningless near the saturation boundary.
+
+\subsection{D-07: Java JIT Warmup Artefact}
+
+At 25~rps, Java DSP reported a mean service time of approximately 0.55~ms. At 50--200~rps, it dropped to 0.24--0.31~ms. This apparent \emph{decrease} in service time with increasing load was the opposite of every other server's behaviour.
+
+The cause is JVM JIT compilation: early requests execute interpreted bytecode (slow), and after a threshold number of invocations of a hot method, the JIT compiles it to native code (fast). At low arrival rates, the steady-state measurement window includes the slow pre-compilation phase. At higher rates, the JIT warmup completes quickly and the trace is dominated by compiled execution.
+
+When the hyperbolic load-dependent model was fitted to Java DSP, the curve fitter returned $\beta \approx 0.999$ because the data points form a decreasing curve (which the hyperbolic model, increasing by design, cannot fit correctly). The R$^2$ values were near zero, confirming the fit was spurious. Java DSP was therefore excluded from the load-dependent model analysis. The lesson is that JVM-based services require a warmup period — production deployments handle this via health-check probes and readiness gates — and that measured service time is only meaningful after warmup has completed.
+
+%-------------------------------------------------------------
+\section{Phase 3: DES Implementation (February -- March 2026)}
+\label{sec:journey-phase3}
+
+\subsection{D-08: DES Underestimated Response Time at Low Load}
+
+Early CDF plots showed the DES producing response times consistently \emph{smaller} than observed at low utilisation ($\rho < 0.1$). KS distances of 0.20--0.27 at low arrival rates were puzzling: the DES was parameterised directly from the same trace it was being validated against, so there should not have been a systematic gap.
+
+The root cause traces back to D-04. At near-zero utilisation, a real M/G/$c$ queue has essentially no queueing delay: a request arrives, finds the server idle, and begins service immediately. The DES correctly simulates this and produces \texttt{wait} $\approx$ 0. However, observed \texttt{queue\_ms} in the Apache traces includes all of the overhead between request acceptance and computation start (Apache process selection, connection handoff, PHP include loading) plus overhead between computation end and socket write. This overhead is present even when no queueing occurs — it is a constant additive term of around 0.5--2~ms per request.
+
+The DES was not wrong: it correctly models the queueing component. The observation was wrong in that the derived \texttt{queue\_ms} is not pure queueing delay. This was documented as a known measurement artefact rather than a model failure. The consequence for KS-based validation is that comparisons at low $\rho$ will always show some irreducible gap for servers where \texttt{queue\_ms} is derived rather than directly measured.
+
+\subsection{D-09: Three DES Modes Produced Different KS Distances}
+
+Running replay, bootstrap, and parametric DES variants on the same trace file produced KS distances that sometimes differed by 0.05--0.10. It was initially unclear which mode to report or whether the differences indicated a bug.
+
+Investigation revealed that each mode tests a different hypothesis. Replay mode uses the exact arrival sequence from the trace and tests whether the service time model explains the observed response times given those specific arrivals. Bootstrap mode resamples inter-arrival times and tests whether the model holds across the distribution of arrival gaps. Parametric mode generates Poisson arrivals at the observed rate and tests the full M/G/$c$ assumption including Poisson arrivals.
+
+The difference between parametric and replay KS therefore quantifies how much non-Poisson arrival behaviour (burstiness, arrival clustering) contributes to model error, independently of the service time model. This became a diagnostic tool rather than a source of confusion: a large gap between parametric and replay KS flags a server whose arrivals are substantially non-Poisson.
+
+\subsection{D-10: KS Distance Implementation Was O($n^2$)}
+
+The original \texttt{ks\_distance()} function iterated over all unique x-values and for each computed the CDF fraction by counting array elements — O($n$) per point, O($n^2$) total. For traces with 10{,}000+ requests, one server took 30--40 seconds to analyse. With nine servers each having 10--15 rate files, a full analysis run took over an hour.
+
+The rewrite used a two-pointer algorithm on pre-sorted arrays: advance two pointers through the merged sorted sequence, maintaining running CDF values for each distribution, and record the maximum absolute difference. This is O($n \log n$) (dominated by the sort) with a very small constant. Runtime dropped to under one second per server. The implementation was extracted to \texttt{des\_utils.py} so all analysis scripts share a single authoritative implementation.
+
+%-------------------------------------------------------------
+\section{Phase 4: Multi-Core Servers (March -- April 2026)}
+\label{sec:journey-phase4}
+
+\subsection{D-11: Worker Count Did Not Match DES $c$ Parameter}
+
+When the multi-server experiments were first run, all servers were initially given \texttt{c=1} in the DES. For Java DSP, which uses a thread pool of four workers, the simulated queue was far longer than observed because the DES believed only one worker was available. KS distances for Java DSP exceeded 0.7 until the correct \texttt{c=4} was used.
+
+This prompted a systematic audit of each server's concurrency model. The audit produced several non-obvious findings. Apache \texttt{mpm\_prefork} spawns one OS process per connection, with \texttt{MaxRequestWorkers} defaulting to 150; but with \texttt{cpus=1.0}, only one process runs at a time, so the effective $c = 1$. Python Gunicorn with \texttt{--workers 3} spawns three independent processes each with their own GIL, giving $c = 3$ genuinely independent workers. Go uses a single shared job channel with a single worker goroutine, so $c = 1$ despite the goroutine model.
+
+The key lesson: the $c$ parameter in M/G/$c$ represents the number of \emph{parallel} servers drawing from a \emph{shared} queue, not simply the number of threads or processes. The architecture of how work is dispatched matters as much as the worker count.
+
+\subsection{D-12: Node.js Cluster Does Not Form a Shared Queue}
+
+After fixing the worker count audit, Node DSP multi-core (three workers) still showed KS distances of 0.66--0.78. With \texttt{c=3} and a reasonable service time estimate, the M/G/3 DES predicted a much lower queue than observed.
+
+The root cause is architectural. Node.js \texttt{cluster} mode forks three independent Node.js processes. The OS distributes incoming connections across workers using \texttt{SO\_REUSEPORT} TCP load balancing, which approximates round-robin but is not perfectly uniform under bursty arrivals. Each worker maintains its own event loop and therefore its own independent queue. This is three parallel M/G/1 queues fed by an approximately equal splitter — not a single M/G/3 queue with a shared waiting room.
+
+Under a shared M/G/3 queue, a request that would wait behind two other requests at a busy worker could instead go to an idle worker. Under Bernoulli splitting, it is assigned to a specific worker and must wait regardless of what the other workers are doing. At moderate load this produces higher observed queueing delay than M/G/3 predicts. No service-time model correction can fix this; it is a structural mismatch between the queueing abstraction and the server architecture. Node DSP 3c was documented as an architectural finding rather than a modelling failure.
+
+%-------------------------------------------------------------
+\section{Phase 5: Model Violations and the Central Discovery (April 2026)}
+\label{sec:journey-phase5}
+
+\subsection{D-13: Service Time Was Not Constant — The Core Assumption Violated}
+
+By this point, the experimental platform was solid: CPU pinning was enforced, service times were correctly instrumented, rejection rates were tracked, and the DES worker counts matched each server's true concurrency model. With these issues resolved, a pattern in the summary CSVs became visible that had previously been masked by noise and errors.
+
+For Apache DSP, \texttt{mean\_svc\_ms} at 10~rps was approximately 2.5~ms. At 75~rps it was approximately 5.8~ms — a 2.3$\times$ increase. For Go lognormal, service time grew from 1.22~ms at 50~rps to 2.18~ms at 200~rps. The M/G/$c$ model assumes that the service time distribution $G$ is independent of the arrival rate. This data showed it was not.
+
+The first hypothesis was measurement error: perhaps the increased service time at high load was an artefact of the derived \texttt{queue\_ms} contaminating \texttt{service\_ms}. This was ruled out by checking servers where \texttt{service\_ms} is measured directly (Go, Node.js) — the growth pattern was the same. The second hypothesis was confounding from non-stationarity (time-varying load during the trace). This was ruled out by confirming that the per-request service time measurements were distributed evenly throughout each trace, not concentrated at the start or end.
+
+The mechanistic explanation, once the measurement explanations were excluded, follows from OS scheduling theory. The Linux Completely Fair Scheduler (CFS) time-slices the CPU among all runnable threads. At high load, more threads compete for the same physical core. Each thread is preempted more frequently and must wait longer for its next scheduling quantum. Wall-clock service time — the time from computation start to computation end as measured inside the handler — includes all of these scheduler delays. The service rate seen by a thread decreases as the number of competing threads increases. This is Processor Sharing at the kernel level, even though the application queue discipline is FCFS.
+
+This observation motivated fitting the hyperbolic model $E[S](\rho) = S_0 / (1 - \beta\rho)$, which is the expected mean service time under a PS queue with base demand $S_0$. The coefficient $\beta$ measures how strongly the server's service time is affected by load — equivalently, how much of the service work is subject to OS-level time-sharing. The model was fitted using nonlinear least squares with AIC-based model selection against two competing hypotheses (constant and linear). The hyperbolic model was selected for all CPU-bound servers.
+
+\textbf{This became the central contribution of the thesis.} The standard M/G/$c$ model, calibrated with the correct parameters and validated against real traces, systematically underestimates response times at moderate to high utilisation for CPU-bound servers. A single additional parameter $\beta$, estimable from a small number of load-test traces, corrects this and produces consistent KS improvement across 100\% of stable measurement points for the affected servers.
+
+\subsection{D-14: Go Lognormal Also Load-Dependent — A Controlled Experiment Broken by the Runtime}
+
+The Go lognormal server was designed to be a controlled ground-truth validator. Its service time was implemented by sampling from a fixed lognormal distribution and then performing a calibrated busy-loop of that duration. The intent was that regardless of load, the service time distribution would be the programmed lognormal. Finding $\beta = 0.976$ for this server was unexpected.
+
+Investigation identified the Go runtime scheduler as the cause. Since Go~1.14, goroutines are asynchronously preemptible (the runtime can preempt a goroutine at any safe point, not just explicit yield points). Under high concurrency, multiple goroutines compete for the same OS thread. The Go scheduler's run queue introduces latency between when a goroutine is runnable and when it actually executes. Since the busy-loop measures wall-clock time, not goroutine-active CPU time, scheduler delays during the loop count as service time.
+
+The lesson was significant: even a synthetically controlled service time is not immune to load-dependence if the measurement captures wall-clock rather than CPU-active time. True constant service time under the M/G/$c$ assumption would require either measuring only CPU-active time (which requires OS instrumentation) or designing the service to be inherently non-preemptible (which is not possible in a multi-goroutine Go program). The Go lognormal server, intended as a validation baseline, became instead another example of the OS PS effect.
+
+\subsection{D-15: Go SQLite Could Not Be Modelled by Any Single-Stage Queue}
+
+Go SQLite showed wildly varying KS distances across rates (0.16 to 0.99) with no consistent pattern. Service time was approximately constant at around 10~ms (it is I/O-bound, so $\beta \approx 0$ and the CPU PS effect is absent), but response time distributions were heavy-tailed and occasionally bimodal.
+
+The root cause is that SQLite in WAL (Write-Ahead Log) mode serialises all write operations through a single writer lock. Under read-dominated workloads the server behaves as M/G/1 and the model fits reasonably. Under write-heavy or mixed workloads, goroutines queue internally for the WAL lock — a second queueing stage that the application-level M/G/1 cannot represent. Additionally, SQLite page-cache cold-start effects caused the first request after an idle period to be $10\times$ slower than subsequent requests, introducing non-stationary variance that a stationary queueing model cannot capture.
+
+This was documented as outside the scope of the M/G/$c$ model family. Go SQLite requires a two-stage tandem queue: an application-level M/G/1 feeding a SQLite lock queue. This finding directly motivated one of the candidate future directions described in Chapter~\ref{ch:conclusion_b}: modelling tandem microservice queues where the downstream stage is an I/O bottleneck rather than a CPU bottleneck.
+
+%-------------------------------------------------------------
+\section{How the Research Direction Changed}
+\label{sec:journey-pivot}
+
+The original plan for Thesis~B, as stated in the Thesis~A project plan (Chapter~\ref{ch:projectplan}), centred on a hybrid ML--DES pipeline: machine-learning models (KDE, GMM, gradient-boosted regressors) would learn empirical service-time distributions as a function of CPU quota and arrival rate, and ARIMA or LSTM models would forecast arrival rates from monitoring data. These ML components would supply the DES with distributional parameters.
+
+What actually happened was different. The measurement and modelling work described in Phases~1--4 revealed that the service-time distribution's shape (captured by the lognormal CV) remained approximately stable with load, while its mean grew systematically. The variation was not distributional in the sense that required a flexible ML model to learn; it was a monotone function of a single observable quantity ($\rho$) that could be expressed with two parameters ($S_0$ and $\beta$). The ``ML'' component reduced to a nonlinear curve fit.
+
+This is not a failure of the original plan. It is a stronger and more interpretable result. A flexible ML model that maps CPU quota and arrival rate to service-time distribution parameters would have produced a black-box predictor that happened to match observations without explaining why. The hyperbolic model with the OS-PS interpretation explains the mechanism. It is falsifiable (it predicts $\beta \approx 0$ for I/O-bound and GIL-constrained servers, which was confirmed), generalisable (the same model structure applies across different language runtimes), and calibrated from far less data (two parameters vs.\ a trained regressor).
+
+The pivot from a planned ML pipeline to a model-based discovery was driven by careful empirical observation — specifically by the systematic analysis of summary CSVs that became possible only after the measurement errors and platform issues in Phases~1--4 were resolved. The difficulties were not obstacles to the research; they were prerequisites for making the central observation visible.

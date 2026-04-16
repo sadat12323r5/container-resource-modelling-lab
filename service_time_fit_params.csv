@@ -1,0 +1,10 @@
+Server,c,S0,beta,R2,ratio,constant?
+Apache DSP (1c),1,2.913,0.999,0.875,2.29,NO
+Apache MSG (1c),1,2.041,0.999,0.745,1.25,NO
+Go lognormal (1c),1,1.261,0.976,0.932,1.78,NO
+Go SQLite (1c),1,10.786,0.0,0.0,0.94,YES
+Java DSP (1c),1,0.401,0.999,0.089,0.81,YES
+Node DSP (1c),1,0.71,0.904,0.77,2.21,NO
+Python DSP (1c),1,8.186,0.0,-0.0,0.96,YES
+Python DSP (3c),3,9.77,0.258,0.753,1.28,NO
+Node DSP (3c),3,1.064,0.039,0.066,0.98,YES

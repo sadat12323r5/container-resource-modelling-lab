@@ -1,0 +1,68 @@
+\chapter{Introduction}\label{ch:intro}
+
+\section*{Project Overview}
+
+Capacity planning is a core topic in performance engineering, focusing on
+how systems behave under changing workloads and resource allocations.
+The COMP9334 course at UNSW introduces students to queueing theory,
+operational laws, and discrete-event simulation (DES), but historically
+lacks practical, hands-on experimentation using real systems. Without
+concrete measurements, students often struggle to build intuition about
+how theoretical models manifest in real-world environments.
+
+This project addresses that gap by developing a low-cost, reproducible
+platform that allows students to run controlled experiments on
+containerised services, collect performance metrics, and compare the
+results directly against analytical and simulation-based predictions.
+
+\section*{Project Aims}
+
+The project aims to:
+
+\begin{itemize}
+    \item Provide accessible, container-based experimental infrastructure
+          that students can run on their own machines.
+    \item Enable hands-on exploration of queueing models, utilisation
+          laws, tail-latency behaviour, and capacity limits.
+    \item Allow students to collect metrics from real services and use
+          them to parameterise analytical models and DES.
+    \item Demonstrate how empirical traces can support predictive
+          performance modelling for various resource configurations.
+\end{itemize}
+
+\section*{System Requirements and Approach}
+
+To be effective for teaching, the platform must satisfy several
+requirements:
+
+\begin{itemize}
+    \item \textbf{Ease of deployment:} The environment should run on
+          Windows, macOS, or Linux with minimal setup, using Docker
+          Compose to orchestrate components.
+    \item \textbf{Lightweight resource usage:} Experiments should be small
+          enough to run on student laptops without specialised hardware.
+    \item \textbf{Configurable workloads and resources:} Students should be
+          able to vary CPU limits, memory quotas, and arrival rates to
+          study performance under scaling and saturation.
+    \item \textbf{Integrated monitoring:} Tools such as cAdvisor,
+          Prometheus, and Grafana provide real-time visibility of CPU
+          usage, memory behaviour, and overall utilisation.
+    \item \textbf{Modelling compatibility:} Collected traces must be usable
+          as inputs for queueing analysis, operational laws, and
+          trace-driven DES.
+\end{itemize}
+
+This approach creates a clear bridge between theory and practice:
+students observe how latency, throughput, and utilisation behave in a
+real system while applying the analytical methods they learn in class.
+
+\bigskip
+
+The remainder of this thesis is organised as follows.  
+Chapter~\ref{ch:background} introduces the theoretical background behind
+capacity planning and relevant modelling techniques.  
+Chapter~\ref{ch:eval} presents the experimental results and validates the
+behaviour of the platform.  
+Chapter~\ref{ch:conclusion} summarises key findings and outlines the next
+steps planned for Thesis~B.
+

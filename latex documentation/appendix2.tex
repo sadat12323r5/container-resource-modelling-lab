@@ -1,0 +1,29 @@
+\chapter{Appendix 2}\label{app2}
+
+% === Placeholder (seminar content) ===
+% If the seminar included supplemental data, place it here.
+% TODO: Replace this placeholder with any seminar appendix data.
+
+This appendix summarises selected experiment artifacts and Vegeta
+load-test results used in the thesis.  Use the raw logs and Prometheus
+time-series for detailed analysis.
+
+\section{Selected Vegeta summary}
+Table shows representative Vegeta results from the HTTP-echo server
+experiments. Median latency remains low while p99 grows sharply near
+saturation, illustrating queueing onset.
+
+\begin{tabular}{lrrrr}
+\hline
+Request rate (req/s) & Total & Mean Latency (ms) & p50 & p99 \\
+\hline
+800  & 48,000 & 1.185 & 1.097 & 2.528 \\
+1,200 & 72,000 & 1.287 & 1.159 & 4.223 \\
+1,600 & 96,000 & 1.518 & 1.236 & 6.959 \\
+\hline
+\end{tabular}
+
+\section{Notes}
+These values are illustrative; refer to the experiment logs for full
+statistical summaries, confidence intervals and raw traces used to
+parameterise simulation models.

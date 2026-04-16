@@ -1,0 +1,254 @@
+\chapter{Literature Review}
+\label{ch:litreview}
+
+\section{Introduction}
+
+Capacity planning in modern distributed systems has undergone a substantial transformation over the past decade. While classical analytical approaches—queueing theory, operational laws, and discrete-event simulation (DES)—remain foundational, industry practice has shifted toward empirical, container-centric, and machine-learning-assisted methodologies. Large-scale organisations such as Google, Netflix, and Meta routinely deploy containerised microservices, maintain continuous observability pipelines, and apply predictive ML models to anticipate saturation, manage tail latency, and uphold SLOs~\cite{Torres2020,Brewer2017}. Recent reflections on queueing theory distinguish between descriptive, prescriptive, and predictive modelling roles, and emphasise that data-rich environments increasingly require prediction grounded in empirical traces and data-driven methods rather than purely analytical formulae~\cite{Glynn2022QueueingFuture}.
+
+In contrast, university teaching—including COMP9334 at UNSW—remains almost entirely theoretical. Students learn the mathematics of queueing and performance modelling but rarely observe how real systems behave under load or how these models diverge from empirical reality. Because neither analytical queueing models nor machine-learning prediction alone can fully capture modern microservice behaviour—where service times shift with CPU throttling, workloads exhibit burstiness, and latency distributions become heavy-tailed—recent research increasingly combines ML for learning empirical distributions with DES for simulating system-level queue dynamics. This hybrid ML–DES approach provides a bridge between data-driven accuracy and theoretical interpretability. Recent research increasingly combines machine-learning techniques—used to learn empirical service-time or arrival distributions—with discrete-event simulation for modelling system-level queue dynamics~\cite{Greasley2020,Atalan2022HealthcareMLDES,Sarjoughian2023TransformDES}. This hybrid ML–DES approach provides a bridge between data-driven accuracy and theoretical interpretability.
+ Motivated by this industrial shift, this chapter reviews the literature on contemporary capacity planning, container performance, hybrid ML–DES modelling, and educational virtualisation platforms. It synthesises their limitations and identifies the gap filled by this thesis: a unified, lightweight, empirically grounded modelling framework suitable for both research and pedagogy.
+
+\section{Capacity Planning in Modern Industry}
+
+In contemporary production systems, capacity planning is inseparable from container orchestration, real-time telemetry, and automated scaling. Container orchestration platforms—most notably Kubernetes—coordinate the deployment, scheduling, and health of microservices running as OCI containers, the open standard packaging format that encapsulates application code together with its filesystem and dependencies. Real-time telemetry pipelines such as Prometheus continuously collect fine-grained metrics from running containers, while Grafana visualises these metrics for engineers monitoring system health. Automated scaling mechanisms, including horizontal and vertical autoscalers, adjust resource allocation in response to observed demand. Microservices are deployed as OCI containers, scaled via Kubernetes autoscalers, and monitored using Prometheus/Grafana-style observability stacks~\cite{Burns2016,GoogleSRE2020}. Instead of relying on textbook M/M/1 or G/G/1 assumptions, practitioners depend on real metrics—CPU throttling, request queue depth, tail latency, and error-budget burn rates—to forecast overload. Tail latency refers to the behaviour of the slowest requests—typically the 95th or 99th percentile—which are disproportionately affected by contention and resource pressure. Error-budget burn measures how quickly a service consumes its allowable failure quota, and has become central to SRE decision-making.
+
+Research has shown that tail latency (p95/p99) follows heavy-tailed distributions and exhibits sudden “latency cliffs” as utilisation increases~\cite{DeanBarroso2013}, challenging the assumption of exponential or light-tailed service times common in classical models. Early measurement-based tools such as R-Capriccio use access logs and CPU utilisation from multi-tier enterprise services to infer per-transaction CPU demands via regression, feeding these estimates into a queueing-network model for capacity planning and anomaly detection~\cite{Zhang2007RCapriccio}. More recent work on commercial-off-the-shelf enterprise applications applies supervised learning to large operational datasets from thousands of servers in order to predict response times and support sizing, consolidation, and capacity-management decisions~\cite{Mueller2022ITCapacityML}. These studies exemplify ML-assisted, measurement-based capacity planning in production environments, but they operate on monolithic or multi-tier enterprise systems rather than containerised microservices, and they do not connect their methodologies to educational settings.
+
+Industrial literature therefore highlights the difficulty of predicting saturation and tail behaviour under dynamic workloads. These effects arise from OS-level scheduling, kernel cgroups, container resource constraints, and microservice call-graph structure—phenomena invisible to pure analytical models. This thesis adopts this modern industrial challenge as its case study: predicting latency, saturation thresholds, and tail behaviour for a containerised microservice under varying load and CPU limits.
+
+\section{Educational Approaches and Their Limitations}
+
+Virtualisation-based teaching platforms have long used VMs or containers to simplify deployment. Studies such as CvLabs, DocLite, and containerised teaching labs show that lightweight virtualisation improves reproducibility and portability~\cite{VituiChen2021}. However, despite their infrastructural convenience, these platforms do not integrate modelling with real performance measurement. They teach how to deploy systems, not how to predict their behaviour.
+
+
+At UNSW, COMP9334 covers analytical tools such as:
+
+\begin{itemize}
+    \item operational analysis,
+    \item queueing networks,
+    \item DES,
+    \item M/M/1 and G/G/1 models,
+    \item bottleneck analysis,
+    \item utilisation laws.
+\end{itemize}
+
+Yet students never compare these predictions with real microservice behaviour. Educational literature emphasises that realistic systems are typically too expensive, too complex, or too resource-heavy to replicate on student machines~\cite{Chen2020}. Full industrial environments—Kubernetes clusters, cloud autoscalers—are pedagogically infeasible.
+
+This motivates the search for a lightweight alternative that preserves real performance phenomena while remaining accessible.
+
+\section{Ideal vs.\ Practical Experimental Environments}
+
+If cost and infrastructure constraints were removed, the ideal setup for replicating industrial capacity planning would match large research testbeds: multinode Kubernetes clusters, distributed load balancers, service meshes such as Istio, autoscaling engines, and multi-stage microservice DAGs~\cite{HPCBenchmark2018,IstioPerf2020}. These environments yield rich behaviours—queue buildup, cascading latency, node contention—ideal for research.
+
+However, they suffer from significant drawbacks:
+
+\begin{itemize}
+    \item multiple physical or cloud machines required,
+    \item ongoing cloud costs,
+    \item noisy, non-reproducible network environments,
+    \item steep operational and configuration complexity,
+    \item far beyond the scope of an undergraduate course.
+\end{itemize}
+
+Although VM-centred teaching infrastructures remain common~\cite{KaunasInfra}, their resource footprint and management overhead make them unsuitable for exploratory performance modelling on commodity hardware, further motivating the use of Docker in this thesis which is consistently validated in lightweight benchmarking studies.
+
+\section{Why Lightweight Containers Are the Suitable Choice}
+
+Complementary efforts have explored portable containerised learning environments designed to run directly on student laptops, reducing setup overheads and improving reproducibility for hands-on computational instruction~\cite{PortableHandsOn}. This aligns closely with the pedagogical constraints of COMP9334, where students must conduct experiments without access to institutional clusters.
+
+The research consensus is that Docker offers the closest approximation of
+industrial microservice behaviour while remaining affordable,
+reproducible, and lightweight. Studies comparing Docker to virtual
+machines show negligible CPU overhead, near-native throughput, and
+realistic cgroup-based throttling effects \cite{Felteretal, Xavieretal}.
+Containers start in milliseconds, require only student-level hardware,
+and reproduce essential behaviours such as:
+
+\begin{itemize}
+    \item CPU throttling under quota,
+    \item container scheduling and isolation,
+    \item I/O delays,
+    \item heavy-tailed service-time variance,
+    \item kernel-mediated resource contention.
+\end{itemize}
+
+Alternative technologies perform significantly worse, as summarised in
+Table~\ref{tab:alt_tech}. These findings justify Docker as the optimal platform for the hybrid
+empirical–modelling workflow developed in this thesis. Beyond technical fidelity, container-based environments have been
+empirically validated in educational settings. Tobarra et~al.\ show that
+Docker-based virtual laboratories achieve extremely high student
+acceptance (usefulness, ease of access, low effort, positive attitude)
+and outperform previous VM- or IoT-based environments in scalability,
+responsiveness, and independence between student sessions
+\cite{Tobarra2020}. Their work demonstrates that containers enable each
+student to run an isolated, realistic multi-service scenario on their
+own device without competing for shared hardware resources—an essential
+requirement for reproducible performance experiments.
+
+A further justification for adopting Docker comes from educational virtualisation research. Multiple studies demonstrate that universities increasingly rely on containers to deliver consistent software environments, interactive labs, and reproducible coursework deployments~\cite{CvLabs,KaunasEdu,PortableCompInstr}. These systems emphasise ease of setup, low overhead, and platform independence—qualities essential for student learning. However, they use containers purely as \emph{infrastructure}: a means of packaging development tools, programming environments, or networking exercises. None of these platforms employ containers as \emph{measurement-driven performance laboratories} or integrate them with observability pipelines capable of capturing CPU throttling, queue dynamics, or tail-latency behaviour. This distinction is critical. While containers are already pedagogically validated for delivering teaching environments, they have not been leveraged to teach capacity planning, operational analysis, or performance modelling through empirical traces. The present thesis fills this missing role by repurposing containers not just as deployment units, but as realistic, instrumented microservices whose behaviour under load can be modelled, learned, and compared against theoretical predictions.
+
+ In addition to course-specific container setups such as CvLabs, recent work has demonstrated institution-scale virtual laboratory platforms built on container orchestration technologies, providing secure, multi-course deployment and centralised monitoring~\cite{SecureScalableLab}. While these systems focus primarily on hosting and access control, rather than performance modelling, they reinforce the feasibility of container-centric instruction.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{l p{9cm}}
+\hline
+\textbf{Technology} & \textbf{Issues Identified in Literature} \\
+\hline
+Kubernetes clusters &
+excessive operational complexity; multi-node requirements; cost
+\cite{K8sPerfSurvey2019}. \\
+Virtual machines &
+high CPU/memory overhead; poor density; reduced responsiveness
+\cite{HyperVVMWarestudies}. \\
+Cloud-hosted systems &
+unpredictable latency; noisy-neighbour effects; recurring cost
+\cite{AzureAWSPerf}. \\
+Serverless &
+opaque autoscaling; vendor-specific runtime behaviour; unsuitable for 
+predictive modelling. \\
+Kafka (as used in MLASP) &
+designed for streaming workloads; unsuitable for request–response
+microservice latency modelling. \\
+\hline
+\end{tabular}
+\caption{Limitations of alternative technologies for student-friendly, reproducible performance-modelling environments.}
+\label{tab:alt_tech}
+\end{table}
+
+
+\section{Measurement Tools: Choosing cAdvisor, Prometheus, and Grafana}
+
+Given the choice of Docker, observability literature strongly supports the
+Prometheus ecosystem for capturing fine-grained container performance.
+cAdvisor provides container-level CPU, memory, and throttling metrics with
+high temporal resolution \cite{GooglecAdvisor}. Prometheus reliably
+scrapes these metrics and stores them as timestamped time-series suitable
+for modelling. Grafana exposes utilisation, queue buildup, and tail
+latency expansion through real-time dashboards.
+
+Compared to alternatives such as Sysstat, Collectd, ELK stacks, or
+cloud-native telemetry suites, the Prometheus–cAdvisor combination offers:
+
+\begin{itemize}
+    \item low overhead,
+    \item high temporal fidelity,
+    \item native Docker integration,
+    \item portability to student machines.
+\end{itemize}
+
+The alignment of this stack with the thesis goals is summarised in
+Table~\ref{tab:observability_stack}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{l l p{5cm}}
+\hline
+\textbf{Requirement} & \textbf{Supported By} & \textbf{Evidence in Literature} \\
+\hline
+Per-container CPU utilisation &
+cAdvisor &
+Google cAdvisor paper (2016). \\
+CPU throttling measurement &
+cAdvisor &
+Docker cgroup performance studies. \\
+High-resolution time-series storage &
+Prometheus &
+Prometheus TSDB study (2019). \\
+Real-time visualisation &
+Grafana &
+Grafana lab performance reports. \\
+Lightweight, student-friendly deployment &
+All &
+Educational VM/container teaching platforms. \\
+\hline
+\end{tabular}
+\caption{Alignment of the observability stack with thesis measurement goals.}
+\label{tab:observability_stack}
+\end{table}
+
+This combination of tools forms the empirical foundation for the hybrid
+ML–DES modelling pipeline developed in this thesis. While container-based experimentation offers a lightweight and accessible way to collect performance traces, it is not without limitations. Docker Desktop introduces variability due to host OS scheduling and virtualization overhead, meaning that fine-grained timing behaviour—particularly near saturation—may deviate from that of a native Linux environment. Similarly, monitoring tools such as cAdvisor and Prometheus come with trade-offs: cAdvisor only stores short-term data in memory and lacks long-range historical context, while Prometheus relies on periodic scrape intervals that limit temporal resolution for fast-changing metrics. ML-assisted capacity planning approaches in industry also have constraints; although methods such as ARIMA, Prophet, KDE, GMMs, and neural regressors can predict workload or service-time distributions, they fundamentally ignore queueing dynamics unless combined with analytical models. Pure ML models cannot explain tail-latency amplification, burstiness, or system stability thresholds without an underlying physics-based model. Together, these factors highlight the need for a hybrid approach where empirical data, ML predictions, and DES are used complementarily rather than in isolation.
+
+\section{Hybrid ML–DES Models in Prior Research}
+
+While discrete-event simulation is sufficiently expressive to model general queueing systems such as M/G/1 or G/G/1, it cannot by itself infer the underlying service-time distribution. Classical queueing theory assumes exponential or phase-type approximations, which fail when real microservices exhibit heavy-tailed latency, multimodal service times, or CPU-throttling-induced shifts in performance. In practice, the challenge is not simulating an M/G/1 queue—DES handles this trivially—but determining the “G”: the empirical service-time distribution and how it changes under different CPU quotas or load conditions. This motivates the integration of machine learning, which can learn these distributions directly from Docker traces using techniques such as kernel density estimation, Gaussian mixture models, or gradient-boosted regressors. DES then consumes these ML-derived service-time models to simulate queue dynamics, saturation, and tail behaviour. Thus ML complements DES by providing the empirical realism that analytical queueing models and pure DES cannot supply on their own.
+
+Recent research explores hybrid modelling in which ML learns empirical distributions or forecasts workloads, while simulations project system behaviour. The MLASP framework~\cite{VituiChen2021} demonstrates ML-assisted prediction for streaming workloads on Kafka, while DES research in logistics and manufacturing shows improved accuracy when ML augments service-time modelling. In healthcare operations, Atalan et al.\ integrate DES models of hospital emergency departments with ensemble ML algorithms to estimate the number of treated patients, waiting times, and costs under alternative staffing and resource configurations~\cite{Atalan2022HealthcareMLDES}. Other work pursues the reverse pattern, using DES to generate large synthetic datasets and then training supervised-learning surrogates that approximate complex PDEVS semiconductor-factory models, thereby accelerating scenario analysis~\cite{Sarjoughian2023TransformDES}. Techniques across these studies include kernel density estimation, Gaussian mixture models, and gradient-boosted regressors for service-time modelling, and ARIMA/LSTM architectures for arrival-rate forecasting.
+
+However, none of these works apply hybrid ML–DES pipelines to containerised microservices. Nor do they integrate empirical container-level measurements with DES to validate tail behaviour or saturation dynamics. MLASP is closest but focuses on message-broker workloads and does not target microservice latency modelling or educational use.
+
+A deeper comparison with MLASP is instructive. MLASP treats the system as a black box: a trained ML model maps a configuration and workload to a throughput prediction, with no mechanistic explanation of why a particular configuration is required or how performance will evolve beyond the training distribution. It requires a labelled training dataset across a range of configurations, followed by model training, validation, and hyperparameter selection. By contrast, the approach developed in this thesis seeks a \emph{mechanistic} model — one whose parameters have a physical interpretation grounded in OS scheduling theory — that can be calibrated from a single load sweep without a training set. The two approaches are complementary: MLASP excels at configuration search across large parameter spaces for streaming workloads; a mechanistic model excels at explaining and predicting load-dependent degradation for request--response services where the queueing structure is known. The absence of a mechanistic, interpretable, low-calibration-cost capacity-planning model for containerised microservices is the gap this thesis directly addresses.
+
+Recent work has also begun to formalise the architectural patterns through which machine learning and discrete-event simulation can be combined. Greasley~\cite{Greasley2020} provides a taxonomy of seven ML–DES integration architectures, ranging from offline data exchange to fully embedded learning within commercial simulation tools. However, all examples in this survey originate from manufacturing, logistics, and robotics, and none address computing systems, containerised microservices, or latency-driven performance modelling. These architectures demonstrate that ML can augment simulation by learning empirical distributions, generating control rules, or guiding decision logic, but they operate in domains where system behaviour is fully synthetic and disconnected from real system telemetry. This further reinforces the gap addressed by this thesis: applying hybrid ML–DES modelling to \emph{real} containerised microservices using empirical performance traces rather than simulated factory workflows.
+
+It is worth noting that the above survey informed the \emph{planned} approach for this thesis at the time of writing Thesis~A: flexible ML models (KDE, GMM, gradient-boosted regressors) would learn service-time distributions from Docker traces, and ARIMA or LSTM would forecast arrival rates. The experimental work in Thesis~B produced a different outcome. Systematic analysis of load-test traces revealed that the service-time distribution's \emph{shape} (captured by the lognormal coefficient of variation) remained stable with load, while the \emph{mean} grew monotonically with utilisation following a hyperbolic curve. This meant the variation was not distributional in a way that required a flexible ML model; it was a monotone function of a single observable ($\rho$) expressible with two parameters ($S_0$ and $\beta$). The planned ML component for service-time learning was therefore replaced by a nonlinear curve fit grounded in OS Processor Sharing theory — a result that is both simpler and more interpretable than what was originally planned. The one place where ML remains genuinely necessary — and where queueing theory has nothing to offer — is arrival-rate forecasting: predicting future $\lambda(t)$ so that the load-dependent DES can issue proactive scaling decisions before saturation occurs. This component is identified as future work in Chapter~\ref{ch:conclusion_b}.
+
+\section{Synthesis: Gap in the Literature}
+
+The literature presents a fragmented landscape:
+
+\begin{itemize}
+    \item benchmarking studies measure container performance but do not predict it;
+    \item DES and queueing papers model systems but rarely confront OS-level realities such as cgroup throttling or heavy-tailed latency;
+    \item ML-based approaches offer flexibility but have not been applied to containerised microservices;
+    \item educational virtualisation papers improve deployment but lack predictive modelling.
+\end{itemize}
+
+What is missing is a unified framework that:
+
+\begin{itemize}
+    \item uses real containerised microservices as the empirical foundation,
+    \item collects measurements via industry-standard observability tools,
+    \item learns service-time and arrival characteristics using ML,
+    \item injects those learned parameters into DES simulations,
+    \item validates predictions against real container behaviour,
+    \item remains lightweight enough for student laptops.
+\end{itemize}
+
+Across these domains, the recurring theme is that ML and DES are
+individually insufficient for modelling systems whose behaviour is both
+empirically irregular and structurally queue-driven. ML alone cannot
+capture queue dynamics or saturation effects, while DES alone cannot
+infer realistic service-time distributions when workloads are
+non-stationary, resource-constrained, or heavily influenced by operating
+system behaviour. This insight translates directly to containerised
+microservices: CPU throttling reshapes service times, bursty arrivals
+produce heavy-tailed latencies, and resource limits cause nonlinear
+performance shifts that classical queueing assumptions cannot express.
+Yet none of the existing hybrid ML–DES studies incorporate empirical
+telemetry from real container environments, nor do they evaluate how
+learned service-time models behave under cgroup constraints. This gap
+motivates the modelling strategy developed in this thesis: using Docker
+load-test traces to learn service-time and arrival characteristics via
+ML, and embedding these learned distributions into DES models to
+simulate utilisation, queue growth, and tail latency under different
+resource configurations. In this way, hybrid ML–DES methods become not
+only relevant but essential for accurately modelling containerised
+microservices.
+
+This thesis is the first to assemble these components into a coherent, reproducible pipeline for both teaching and research. By grounding classical capacity-planning theory in real measurements and hybrid ML–DES modelling, it addresses the pedagogical gap in COMP9334 and contributes a novel methodology to the performance-engineering literature.
+
+\subsection{High-Value Open Problems in Capacity Planning}
+
+Beyond the specific gaps identified above, a broader survey of the capacity planning literature reveals six recurring open problems that remain substantially unsolved. Positioning this thesis against each clarifies both its contribution and the directions it opens.
+
+\paragraph{Gap 1: Explainable, mechanistic performance models for containerised services.}
+The industry has converged on Prometheus and Grafana for observability, but these tools report symptoms — CPU utilisation rising, latency percentiles growing — without explaining causes. There is no widely adopted framework that connects OS-level scheduling behaviour to queueing model parameters in a container context, and therefore no principled basis for predicting \emph{when} a service will saturate or \emph{why} its latency distribution is changing. This is arguably the most valuable open gap in the space: practitioners have rich telemetry but no causal model. This thesis addresses this gap directly by linking the hyperbolic service-time inflation observed in load traces to the Processor Sharing effect of the Linux CFS scheduler, and by introducing a per-server coefficient $\beta$ that quantifies this relationship empirically.
+
+\paragraph{Gap 2: Proactive autoscaling — predicting saturation before it occurs.}
+All major cloud autoscalers (Kubernetes HPA, AWS Target Tracking, GCP Autoscaler) operate as feedback controllers: they observe that a utilisation or latency threshold has already been exceeded and then trigger scaling. The fundamental limitation of this architecture is that new replicas take 10--30 seconds to pass readiness checks, during which the queue has already built and SLOs have already been breached. A feedforward controller — one that forecasts future arrival rates and evaluates whether predicted load will breach SLOs before it arrives — would eliminate this reactive latency spike. This requires two components working together: a service response model (how does this service behave at a given $\lambda$?) and a workload forecaster (what $\lambda$ is coming?). This thesis provides the service response model; arrival-rate forecasting using ARIMA or Prophet on Prometheus data is identified as the remaining component needed to close the loop.
+
+\paragraph{Gap 3: Full response-time distribution prediction, not just mean latency.}
+Production SLOs are defined on tail latencies — p95, p99 — not mean response time. Classical queueing theory is largely a mean-value theory: the Pollaczek--Khinchine formula gives mean waiting time; the Erlang C formula gives mean queue length. Predicting the full response-time distribution at high utilisation, especially the tail, is analytically hard and largely unsolved for general service-time distributions under load-dependent conditions. Discrete-event simulation sidesteps this by simulating the full distribution directly, and this thesis validates against the full CDF using KS distance rather than mean error alone — an approach that is ahead of most comparable empirical work.
+
+\paragraph{Gap 4: Multi-tier and service mesh capacity planning.}
+Production microservices are not isolated queues; they form call graphs. A request entering a gateway may trigger calls to two or three downstream services, one of which may call a database. Saturation at any node propagates upstream in ways that single-queue models cannot represent. Tandem queue theory exists but is analytically tractable only for exponential service times and simple topologies; real service meshes have arbitrary DAG structure, non-exponential service times, and load-dependent behaviour at each stage. This is a wide-open research area. This thesis identifies the two-stage queue structure of the Go SQLite server as a case that single-stage M/G/$c$ cannot model, and flags tandem queueing as a natural direction for extension.
+
+\paragraph{Gap 5: Workload non-stationarity and regime changes.}
+Most queueing models assume stationary arrival rates. Production workloads have daily and weekly cycles, flash crowds from external events, and regime changes caused by deployments or incidents. A capacity-planning model that cannot adapt to non-stationary conditions will miscalibrate quickly. Arrival-rate forecasting is the primary tool here, but there is also a need for regime-change detection: identifying when a server's $\beta$ value has shifted (e.g., due to a dependency change or a new workload type) and triggering recalibration. This thesis does not address non-stationarity directly but the load-test calibration workflow is lightweight enough to be run continuously as a background process.
+
+\paragraph{Gap 6: A canonical empirical dataset for containerised microservice performance.}
+There is no standard benchmark dataset of request-level traces, service times, and utilisation measurements across multiple language runtimes under controlled CPU constraints. Without such a dataset, researchers developing new capacity-planning models cannot reproduce or compare results. This thesis produces exactly this as a side effect of its experimental programme: nine server implementations, each with per-request traces at a full range of arrival rates, CPU-pinned and reproducible. This dataset has value independent of the modelling contributions and directly addresses a reproducibility gap in the performance-engineering literature.
+
+

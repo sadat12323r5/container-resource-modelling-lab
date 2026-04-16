@@ -1,0 +1,65 @@
+\documentclass[]{unswthesis}
+
+%%% Thesis details
+\thesistitle{Modelling the impact of resources on Docker Containers}
+\thesisschool{School of Computer Science and Engineering}
+\thesisauthor{Sadat Muhtasim Kabir}
+\thesisZid{z5443562}
+\thesisdegree{Bachelor of Engineering (Honours) in Computer Engineering}
+\thesisdate{November 2025}
+\thesissupervisor{A/Prof.\ Chun-Tung Chou}
+
+%% My own LaTeX macros, definitions, etc
+\input{definitions}
+
+%%% >>> ADD THESE PACKAGES HERE <<< %%%
+\usepackage{amsmath}      % for \text, \tfrac, align, etc.
+\usepackage{amssymb}      % for \checkmark
+\usepackage{booktabs}     % for \toprule, \midrule, \bottomrule
+\usepackage{tikz}         % for diagrams + pgfplots
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18} % fixes pgfplots version mismatch
+\usepackage{pgfgantt}   % for Gantt charts
+
+%%% >>> END OF PACKAGE INSERTION <<< %%%
+
+\begin{document}
+\setlength{\headheight}{26pt}  % Fix fancyhdr warning
+
+%% --- Front matter ---
+\frontmatter  
+\maketitle
+
+\include{abstract}
+\include{acknowledgements}
+\include{abbreviations}
+
+\tableofcontents
+\listoffigures      % optional
+\listoftables       % optional
+
+%% --- Main matter ---
+\mainmatter
+
+\include{introduction}
+\include{background}
+\include{mywork}     % your methods / experimental work chapter
+\include{evaluation}
+\include{project-plan}
+\include{conclusion}
+
+%% --- Thesis B chapters ---
+\include{research_journey}
+\include{methodology_b}
+\include{loaddep_model}
+\include{conclusion_b}
+
+%% --- Back matter ---
+\backmatter
+
+\bibliographystyle{alpha}
+\bibliography{pubs}
+
+% \include{appendix2}  % REMOVE or uncomment only if you have it
+
+\end{document}

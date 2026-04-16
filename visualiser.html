@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M/G/c Queue Simulator — Capacity Planning</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f2f5; color: #1a1a2e; font-size: 14px; }
+
+header { background: #1a1a2e; color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+header h1 { font-size: 18px; font-weight: 600; }
+header p  { font-size: 12px; color: #8892b0; margin-top: 2px; }
+.badge { background: #0f3460; border: 1px solid #e94560; color: #e94560; font-size: 11px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+
+.controls { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 12px 24px; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+.ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+.ctrl-group label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.ctrl-group .value { font-size: 15px; font-weight: 700; color: #1a1a2e; min-width: 55px; }
+input[type=range] { width: 140px; accent-color: #0f3460; cursor: pointer; }
+.worker-btns { display: flex; gap: 4px; }
+.worker-btns button { width: 32px; height: 32px; border: 2px solid #cbd5e1; border-radius: 6px; background: #fff; cursor: pointer; font-weight: 700; font-size: 14px; transition: all 0.15s; }
+.worker-btns button.active { background: #0f3460; color: #fff; border-color: #0f3460; }
+.action-btns { display: flex; gap: 8px; align-items: flex-end; margin-left: auto; }
+.btn { padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.btn-primary { background: #0f3460; color: #fff; }
+.btn-primary:hover { background: #e94560; }
+.btn-secondary { background: #e2e8f0; color: #475569; }
+.btn-secondary:hover { background: #cbd5e1; }
+
+.main { display: grid; grid-template-columns: 340px 1fr 1fr; grid-template-rows: auto auto; gap: 12px; padding: 12px 24px; }
+
+.panel { background: #fff; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 10px; }
+
+/* Queue canvas panel spans 2 rows */
+.queue-panel { grid-row: 1 / 3; display: flex; flex-direction: column; }
+#queueCanvas { border-radius: 8px; background: #0d1117; flex: 1; min-height: 280px; }
+
+.chart-panel { min-height: 180px; }
+.chart-panel canvas { max-height: 160px; }
+
+/* Stats row */
+.stats-row { grid-column: 2 / 4; display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; }
+.stat-card { background: #fff; border-radius: 10px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.stat-card .label { font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .number { font-size: 26px; font-weight: 700; color: #0f3460; margin-top: 2px; }
+.stat-card .sub { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+.stat-card.warn .number { color: #e94560; }
+.stat-card.ok   .number { color: #10b981; }
+
+/* Operational laws */
+.laws { grid-column: 1 / 4; background: #fff; border-radius: 10px; padding: 14px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.laws-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; padding: 6px 10px; background: #f8fafc; color: #64748b; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e2e8f0; }
+td { padding: 7px 10px; border-bottom: 1px solid #f1f5f9; }
+td.formula { font-family: 'Courier New', monospace; color: #0f3460; font-size: 12px; }
+td.match { text-align: center; font-size: 16px; }
+
+.rho-bar-wrap { margin-top: 8px; }
+.rho-label { display: flex; justify-content: space-between; font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.rho-bar { height: 18px; background: #e2e8f0; border-radius: 4px; overflow: hidden; position: relative; }
+.rho-fill { height: 100%; border-radius: 4px; transition: width 0.3s, background 0.3s; }
+.rho-ticks { position: relative; height: 10px; }
+.rho-ticks span { position: absolute; font-size: 10px; color: #94a3b8; transform: translateX(-50%); }
+
+.sim-time { font-size: 11px; color: #94a3b8; margin-left: auto; }
+.speed-row { display: flex; align-items: center; gap: 8px; }
+.speed-labels { display: flex; justify-content: space-between; width: 140px; font-size: 10px; color: #94a3b8; }
+
+/* Live experiment panel */
+.live-bar { background: #0f1923; border-bottom: 1px solid #1e3a5f; padding: 10px 24px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.live-bar label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.live-bar select, .live-bar input[type=text] { font-size: 12px; padding: 5px 8px; border: 1px solid #1e3a5f; border-radius: 5px; background: #1a2942; color: #e2e8f0; }
+.live-bar input[type=text] { width: 220px; }
+.live-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; background: #334155; transition: background 0.3s; }
+.live-dot.on { background: #e94560; box-shadow: 0 0 6px #e94560; animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.live-status { font-size: 12px; color: #64748b; }
+
+/* Gantt timeline */
+.gantt-section { background: #fff; border-radius: 10px; margin: 0 24px 20px; padding: 14px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.gantt-header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+.gantt-legend span { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #94a3b8; margin-right: 12px; }
+.gantt-legend .swatch { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
+#ganttCanvas { background: #0d1117; border-radius: 8px; width: 100%; display: block; }
+select.speed-sel { font-size: 12px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #1a1a2e; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>M/G/c Queue Simulator</h1>
+    <p>Interactive capacity planning — COMP9334</p>
+  </div>
+  <div class="badge">Thesis B · Sadat Kabir</div>
+  <span class="sim-time" id="simTimeDisplay">Sim time: 0.0 s</span>
+</header>
+
+<!-- ── Controls ── -->
+<div class="controls">
+  <div class="ctrl-group">
+    <label>Arrival rate λ</label>
+    <div class="speed-labels"><span>1</span><span style="margin-left:50px">50</span><span>200 rps</span></div>
+    <input type="range" id="slLambda" min="1" max="200" value="10" step="1">
+    <span class="value" id="valLambda">10 rps</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Mean service E[S]</label>
+    <div class="speed-labels"><span>5</span><span style="margin-left:40px">50</span><span>200 ms</span></div>
+    <input type="range" id="slService" min="5" max="200" value="50" step="5">
+    <span class="value" id="valService">50 ms</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Variability CV</label>
+    <div class="speed-labels"><span>0</span><span style="margin-left:45px">1</span><span>3</span></div>
+    <input type="range" id="slCV" min="0" max="3" value="0.5" step="0.1">
+    <span class="value" id="valCV">0.5</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Workers c</label>
+    <div class="worker-btns" id="workerBtns">
+      <button class="active" data-c="1">1</button>
+      <button data-c="2">2</button>
+      <button data-c="3">3</button>
+      <button data-c="4">4</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <label>Sim speed</label>
+    <div class="speed-labels"><span>1×</span><span style="margin-left:30px">25×</span><span>100×</span></div>
+    <input type="range" id="slSpeed" min="1" max="100" value="10" step="1">
+    <span class="value" id="valSpeed">10×</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Observed trace</label>
+    <button class="btn btn-secondary" id="btnLoadCSV" style="padding:6px 14px;font-size:12px;">📂 Load CSV</button>
+    <input type="file" id="fileInput" accept=".csv" style="display:none">
+    <span id="csvInfo" style="font-size:11px;color:#64748b;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">no file loaded</span>
+  </div>
+  <div class="action-btns">
+    <button class="btn btn-secondary" id="btnReset">↺ Reset</button>
+    <button class="btn btn-primary"   id="btnStart">▶ Start</button>
+  </div>
+</div>
+
+<!-- ── Live experiment bar ── -->
+<div class="live-bar">
+  <span class="live-dot" id="liveDot"></span>
+  <div style="display:flex;flex-direction:column;gap:3px;">
+    <label>Server</label>
+    <select id="liveServer" style="min-width:220px;">
+      <option value="">— loading servers —</option>
+    </select>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:3px;">
+    <label>Custom URL</label>
+    <input type="text" id="liveUrl" placeholder="http://localhost:8080" style="width:200px;">
+  </div>
+  <div style="display:flex;flex-direction:column;gap:3px;">
+    <label>Workers c (for DES)</label>
+    <input type="number" id="liveWorkers" value="1" min="1" max="8" style="width:54px;padding:5px 6px;font-size:12px;border:1px solid #1e3a5f;border-radius:5px;background:#1a2942;color:#e2e8f0;">
+  </div>
+  <button class="btn btn-primary" id="btnLiveConnect" style="background:#1e3a5f;padding:7px 16px;font-size:12px;">⚡ Connect</button>
+  <button class="btn btn-secondary" id="btnLiveStop" disabled style="padding:7px 16px;font-size:12px;">⏹ Stop</button>
+  <span class="live-status" id="liveStatus">Start vis_server.py first, then connect</span>
+  <span style="margin-left:auto;font-size:11px;color:#334155;font-style:italic;">λ slider controls live request rate · DES runs in parallel</span>
+</div>
+
+<!-- ── Main layout ── -->
+<div class="main">
+
+  <!-- Queue animation -->
+  <div class="panel queue-panel">
+    <div class="panel-title">Queue &amp; Servers — live view</div>
+    <canvas id="queueCanvas"></canvas>
+    <div style="margin-top:8px; font-size:11px; color:#94a3b8; text-align:center;">
+      Amber = waiting &nbsp;·&nbsp; Blue = in service &nbsp;·&nbsp; Green flash = completed
+    </div>
+  </div>
+
+  <!-- Queue length chart -->
+  <div class="panel chart-panel">
+    <div class="panel-title">Queue length over time (waiting requests)</div>
+    <canvas id="chartQueue"></canvas>
+  </div>
+
+  <!-- Response time CDF -->
+  <div class="panel chart-panel">
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>Response time CDF</span>
+      <span id="ksDisplay" style="font-size:11px;color:#e94560;font-weight:700;"></span>
+    </div>
+    <canvas id="chartResp"></canvas>
+  </div>
+
+  <!-- Key stats -->
+  <div class="stats-row">
+    <div class="stat-card" id="cardRho">
+      <div class="label">Utilisation ρ</div>
+      <div class="number" id="statRho">0.00</div>
+      <div class="sub">λ · E[S] / c</div>
+      <div class="rho-bar-wrap">
+        <div class="rho-bar"><div class="rho-fill" id="rhoFill" style="width:0%"></div></div>
+        <div class="rho-ticks">
+          <span style="left:50%">0.5</span>
+          <span style="left:80%">0.8</span>
+          <span style="left:100%">1.0</span>
+        </div>
+      </div>
+    </div>
+    <div class="stat-card" id="cardResp">
+      <div class="label">Mean response E[R]</div>
+      <div class="number" id="statResp">— ms</div>
+      <div class="sub">queue wait + service</div>
+    </div>
+    <div class="stat-card" id="cardQueue">
+      <div class="label">Mean queue E[Nq]</div>
+      <div class="number" id="statQueue">—</div>
+      <div class="sub">waiting (not in service)</div>
+    </div>
+    <div class="stat-card" id="cardN">
+      <div class="label">Mean in system E[N]</div>
+      <div class="number" id="statN">—</div>
+      <div class="sub">queue + servers</div>
+    </div>
+  </div>
+
+  <!-- Operational laws -->
+  <div class="laws">
+    <div class="panel-title">Operational Laws &amp; Theory vs Simulation</div>
+    <div class="laws-grid">
+      <div>
+        <table>
+          <tr><th>Law</th><th>Formula</th><th>Theoretical</th><th>Observed</th><th style="text-align:center">Match?</th></tr>
+          <tr>
+            <td>Utilisation Law</td>
+            <td class="formula">ρ = λ · E[S] / c</td>
+            <td id="lawRhoTheory">—</td>
+            <td id="lawRhoObs">—</td>
+            <td class="match" id="lawRhoMatch">—</td>
+          </tr>
+          <tr>
+            <td>Little's Law (system)</td>
+            <td class="formula">E[N] = λ · E[R]</td>
+            <td id="lawLittleTheory">—</td>
+            <td id="lawLittleObs">—</td>
+            <td class="match" id="lawLittleMatch">—</td>
+          </tr>
+          <tr>
+            <td>Little's Law (queue)</td>
+            <td class="formula">E[Nq] = λ · E[Wq]</td>
+            <td id="lawLittleQTheory">—</td>
+            <td id="lawLittleQObs">—</td>
+            <td class="match" id="lawLittleQMatch">—</td>
+          </tr>
+        </table>
+        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">
+          Match ✓ when theoretical and observed agree within 10%.
+          These laws are distribution-free — they hold regardless of arrival or service distribution
+          as long as the system is stable (ρ &lt; 1).
+        </div>
+      </div>
+      <div>
+        <table>
+          <tr><th>Quantity</th><th>Model</th><th>Theory</th><th>Simulation</th></tr>
+          <tr>
+            <td>Mean response E[R]</td>
+            <td id="modelName">M/G/1 P-K</td>
+            <td id="theoResp">—</td>
+            <td id="simResp">—</td>
+          </tr>
+          <tr>
+            <td>Mean wait E[Wq]</td>
+            <td></td>
+            <td id="theoWait">—</td>
+            <td id="simWait">—</td>
+          </tr>
+          <tr>
+            <td>Throughput X</td>
+            <td></td>
+            <td id="theoTput">—</td>
+            <td id="simTput">—</td>
+          </tr>
+          <tr>
+            <td>Capacity knee</td>
+            <td></td>
+            <td id="theoKnee">—</td>
+            <td>ρ→1 when λ→<span id="kneeVal">—</span></td>
+          </tr>
+        </table>
+        <div style="font-size:11px; color:#94a3b8; margin-top:6px;">
+          Theory: M/G/1 uses Pollaczek–Khinchine formula. M/G/c uses Erlang-C × (1+CV²)/2 correction.
+          Parametric simulation uses lognormal service times.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- ── Gantt timeline ── -->
+<div class="gantt-section">
+  <div class="gantt-header">
+    <span class="panel-title" style="margin:0;">Request Timeline — Observed Trace vs DES Shadow</span>
+    <span style="font-size:11px;color:#94a3b8;flex:1;">Replay your CSV trace and watch each request's lifecycle alongside what DES would have predicted</span>
+    <label style="font-size:11px;color:#64748b;font-weight:600;">Speed</label>
+    <select id="replaySpeed" class="speed-sel">
+      <option value="1">1×</option>
+      <option value="5">5×</option>
+      <option value="10" selected>10×</option>
+      <option value="50">50×</option>
+      <option value="200">200×</option>
+    </select>
+    <button class="btn btn-secondary" id="btnReplay"      disabled style="padding:6px 14px;font-size:12px;">▶ Replay Trace</button>
+    <button class="btn btn-secondary" id="btnReplayReset" disabled style="padding:6px 14px;font-size:12px;">↺ Reset</button>
+    <span id="replayStatus" style="font-size:11px;color:#94a3b8;min-width:180px;">load a CSV to enable</span>
+  </div>
+  <div class="gantt-legend" style="margin-bottom:8px;">
+    <span><span class="swatch" style="background:#06b6d4;"></span>Live RTT (total)</span>
+    <span><span class="swatch" style="background:#f59e0b;"></span>Trace wait</span>
+    <span><span class="swatch" style="background:#3b82f6;"></span>Trace service</span>
+    <span><span class="swatch" style="background:rgba(245,158,11,0.3);border:1px dashed #f59e0b;"></span>DES wait</span>
+    <span><span class="swatch" style="background:rgba(59,130,246,0.3);border:1px dashed #3b82f6;"></span>DES service</span>
+    <span style="margin-left:8px;color:#64748b;">Top half = observed &nbsp;·&nbsp; Bottom half = DES shadow &nbsp;·&nbsp; x-axis = time (ms) &nbsp;·&nbsp; Teal = live RTT (no wait/service split)</span>
+  </div>
+  <canvas id="ganttCanvas" height="340"></canvas>
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────
+// Simulation engine
+// ─────────────────────────────────────────────────────────────
+class MinHeap {
+  constructor() { this.h = []; }
+  push(e) {
+    this.h.push(e); let i = this.h.length - 1;
+    while (i > 0) {
+      const p = (i-1)>>1;
+      if (this.h[p].t <= this.h[i].t) break;
+      [this.h[p], this.h[i]] = [this.h[i], this.h[p]]; i = p;
+    }
+  }
+  pop() {
+    const top = this.h[0], last = this.h.pop();
+    if (this.h.length) {
+      this.h[0] = last; let i = 0;
+      while (true) {
+        let s = i, l = 2*i+1, r = 2*i+2;
+        if (l < this.h.length && this.h[l].t < this.h[s].t) s = l;
+        if (r < this.h.length && this.h[r].t < this.h[s].t) s = r;
+        if (s === i) break;
+        [this.h[s], this.h[i]] = [this.h[i], this.h[s]]; i = s;
+      }
+    }
+    return top;
+  }
+  get size() { return this.h.length; }
+  peek() { return this.h[0]; }
+}
+
+function sampleExp(rate) { return -Math.log(Math.random()) / rate; }
+
+function sampleLognormal(mean, cv) {
+  if (cv < 0.01) return mean;
+  const s2 = Math.log(1 + cv*cv);
+  const mu = Math.log(mean) - s2/2;
+  const u1 = Math.random(), u2 = Math.random();
+  const z = Math.sqrt(-2*Math.log(u1)) * Math.cos(2*Math.PI*u2);
+  return Math.max(1e-9, Math.exp(mu + Math.sqrt(s2)*z));
+}
+
+class Simulator {
+  constructor(lambda, meanServiceS, cv, c) {
+    this.lambda = lambda;
+    this.meanS   = meanServiceS;
+    this.cv      = cv;
+    this.c       = c;
+    this.t       = 0;
+    this.events  = new MinHeap();
+    this.queue   = [];                      // waiting requests {arrT}
+    this.servers = new Array(c).fill(null); // null=idle | {arrT, startT, svcT, finT}
+    this.nArrived = 0; this.nDone = 0;
+    this.sumResp = 0; this.sumWait = 0; this.sumSvc = 0;
+    this.sumBusy = 0;
+    this.lastBusyStart = new Array(c).fill(null);
+    this.qLenSum = 0; this.qLenSamples = 0;
+    this.recentCompleted = [];   // server ids that flashed this tick (animation)
+    this.recentRespTimes = [];   // actual response times (ms) completed this tick
+    this._scheduleArrival();
+  }
+  _scheduleArrival() {
+    this.events.push({ t: this.t + sampleExp(this.lambda), type: 0 });
+  }
+  _svc() { return sampleLognormal(this.meanS, this.cv); }
+  _freeServer() { return this.servers.indexOf(null); }
+
+  // Advance by dt simulated seconds. Returns snapshot for animation.
+  advance(dt) {
+    const end = this.t + dt;
+    this.recentCompleted = [];
+    this.recentRespTimes = [];
+    const snapshot = { arrived: 0, departed: 0 };
+
+    while (this.events.size && this.events.peek().t <= end) {
+      const e = this.events.pop();
+      this.t = e.t;
+
+      if (e.type === 0) { // arrival
+        const req = { arrT: this.t, startT: null, svcT: this._svc() };
+        this.nArrived++;
+        snapshot.arrived++;
+        const sid = this._freeServer();
+        if (sid >= 0) {
+          req.startT = this.t;
+          req.finT = this.t + req.svcT;
+          this.servers[sid] = { ...req, sid };
+          this.lastBusyStart[sid] = this.t;
+          this.events.push({ t: req.finT, type: 1, sid });
+        } else {
+          this.queue.push(req);
+        }
+        this._scheduleArrival();
+
+      } else { // departure
+        const sid = e.sid;
+        const srv = this.servers[sid];
+        if (!srv) continue;
+        const resp = this.t - srv.arrT;
+        const wait = srv.startT - srv.arrT;
+        this.nDone++;
+        this.sumResp += resp;
+        this.sumWait += wait;
+        this.sumSvc  += srv.svcT;
+        this.sumBusy += this.t - (this.lastBusyStart[sid] ?? this.t);
+        snapshot.departed++;
+        this.recentCompleted.push(sid);
+        this.recentRespTimes.push(resp * 1000);  // actual simulated response time in ms
+
+        if (this.queue.length) {
+          const next = this.queue.shift();
+          next.startT = this.t;
+          next.finT   = this.t + next.svcT;
+          this.servers[sid] = { ...next, sid };
+          this.lastBusyStart[sid] = this.t;
+          this.events.push({ t: next.finT, type: 1, sid });
+        } else {
+          this.servers[sid] = null;
+          this.lastBusyStart[sid] = null;
+        }
+      }
+    }
+    this.t = end;
+
+    // Sample queue length for running average
+    this.qLenSum += this.queue.length;
+    this.qLenSamples++;
+
+    return snapshot;
+  }
+
+  get rhoTheory() { return this.lambda * this.meanS / this.c; }
+  get rhoObs()    {
+    const busySoFar = this.sumBusy + this.servers.reduce((s, srv, i) =>
+      srv && this.lastBusyStart[i] != null ? s + (this.t - this.lastBusyStart[i]) : s, 0);
+    return this.t > 0 ? busySoFar / (this.t * this.c) : 0;
+  }
+  get meanRespMs()  { return this.nDone ? this.sumResp / this.nDone * 1000 : null; }
+  get meanWaitMs()  { return this.nDone ? this.sumWait / this.nDone * 1000 : null; }
+  get throughput()  { return this.t > 0 ? this.nDone / this.t : 0; }
+  get meanNq()      { return this.qLenSamples ? this.qLenSum / this.qLenSamples : 0; }
+  get meanN()       {
+    const R = this.meanRespMs; if (R == null) return null;
+    return this.throughput * R / 1000;
+  }
+  get queueLength() { return this.queue.length; }
+  get busyCount()   { return this.servers.filter(Boolean).length; }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Theory: P-K (M/G/1) and Erlang-C / M/G/c
+// ─────────────────────────────────────────────────────────────
+function erlangC(lambda, mu, c) {
+  const a = lambda / mu;     // offered load (erlangs)
+  const rho = a / c;
+  if (rho >= 1) return 1;
+  let sum = 1, ak = 1;
+  for (let k = 1; k < c; k++) { ak *= a / k; sum += ak; }
+  const last = (ak * a / c) / (1 - rho);
+  return last / (sum + last);
+}
+
+function theoreticalMGc(lambda, meanS, cv, c) {
+  const rho = lambda * meanS / c;
+  if (rho >= 0.999) return { Wq: Infinity, R: Infinity, rho };
+  const mu = 1 / meanS;
+  if (c === 1) {
+    // P-K formula for M/G/1
+    const Wq = rho * meanS * (1 + cv*cv) / (2 * (1 - rho));
+    return { Wq, R: Wq + meanS, rho };
+  } else {
+    // Erlang-C × heavy-traffic correction for M/G/c
+    const C = erlangC(lambda, mu, c);
+    const Wq_mmc = C / (c * mu - lambda);
+    const Wq_mgc = Wq_mmc * (1 + cv*cv) / 2;
+    return { Wq: Wq_mgc, R: Wq_mgc + meanS, rho };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Batch replay DES — uses same arrival times as trace, samples service distribution
+// ─────────────────────────────────────────────────────────────
+function runReplayDES(arrivalTimesMs, meanSvcMs, cv, c) {
+  const freeAt = new Array(c).fill(0);   // when each worker becomes free (ms)
+  return arrivalTimesMs.map(arrT => {
+    // pick the worker that will be free soonest
+    let sid = 0;
+    for (let s = 1; s < c; s++) if (freeAt[s] < freeAt[sid]) sid = s;
+    const startT = Math.max(arrT, freeAt[sid]);
+    const svcT   = sampleLognormal(meanSvcMs, cv);
+    freeAt[sid]  = startT + svcT;
+    return { arrMs: arrT, startMs: startT, waitMs: startT - arrT, svcMs: svcT, respMs: startT - arrT + svcT };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────
+let sim = null;
+let running = false;
+let loopId  = null;
+
+let lambda     = 10;
+let meanSvcMs  = 50;
+let cv         = 0.5;
+let c          = 1;
+let speed      = 10;
+
+// Chart data
+const MAX_QHIST    = 150;
+const SIM_RESP_CAP = 5000;   // max simulated response times to keep for CDF
+let qHistory       = [];
+let simAllRespTimes = [];     // accumulated actual sim response times (ms)
+let observedData   = null;    // sorted observed response_ms array from loaded CSV
+
+// Trace replay / Gantt state
+let traceRequests   = null;   // [{relArrMs, serviceMs, queueMs, responseMs}] from CSV
+let desReplayResult = null;   // [{arrMs, waitMs, svcMs, respMs}] batch DES on same arrivals
+let replayActive    = false;
+let replayLoopId    = null;
+let replaySimMs     = 0;      // simulated trace-time elapsed (ms)
+let replayTraceIdx  = 0;      // next trace request to process
+let ganttBuffer     = [];     // display buffer: {num, obs:{arrMs,waitMs,svcMs,respMs}, des:{...}}
+const GANTT_ROWS    = 44;
+
+// ─────────────────────────────────────────────────────────────
+// Charts
+// ─────────────────────────────────────────────────────────────
+let chartQ, chartR;
+
+function initCharts() {
+  const qCtx = document.getElementById('chartQueue').getContext('2d');
+  const rCtx = document.getElementById('chartResp').getContext('2d');
+
+  if (chartQ) chartQ.destroy();
+  if (chartR) chartR.destroy();
+
+  chartQ = new Chart(qCtx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Queue length (waiting)',
+        data: [],
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.1)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.3,
+      }]
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { min: 0, ticks: { maxTicksLimit: 5 }, title: { display: true, text: 'Requests waiting', font: { size: 10 } } }
+      }
+    }
+  });
+
+  chartR = new Chart(rCtx, {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Simulation',
+          data: [],
+          borderColor: '#e41a1c',
+          borderWidth: 2,
+          borderDash: [5, 3],
+          pointRadius: 0,
+          stepped: 'before',
+          fill: false,
+        },
+        {
+          label: 'Observed (CSV)',
+          data: [],
+          borderColor: '#4c72b0',
+          borderWidth: 2,
+          pointRadius: 0,
+          stepped: 'before',
+          fill: false,
+        }
+      ]
+    },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: true, labels: { font: { size: 10 }, boxWidth: 18, padding: 8 } }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Response time (ms)', font: { size: 10 } },
+          ticks: { maxTicksLimit: 8 }
+        },
+        y: {
+          min: 0, max: 1,
+          title: { display: true, text: 'CDF', font: { size: 10 } },
+          ticks: { maxTicksLimit: 5 }
+        }
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Canvas animation
+// ─────────────────────────────────────────────────────────────
+const canvas  = document.getElementById('queueCanvas');
+const ctx2d   = canvas.getContext('2d');
+let flashTimer = {};  // sid -> countdown frames
+
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width  = Math.floor(rect.width - 28);
+  canvas.height = Math.max(280, Math.floor(rect.height - 80));
+}
+
+function drawQueue() {
+  if (!sim) return;
+  const W = canvas.width, H = canvas.height;
+  ctx2d.clearRect(0, 0, W, H);
+
+  const c_count = sim.c;
+  const R = 10;                          // dot radius
+  const SRV_W = 70, SRV_H = 54;
+  const srvX = W - SRV_W - 12;
+  const srvStartY = 20;
+  const srvGap = Math.min(SRV_H + 10, (H - 40) / c_count);
+
+  // ── Arrival arrow ──
+  ctx2d.strokeStyle = '#4ade80';
+  ctx2d.lineWidth = 2;
+  ctx2d.setLineDash([6, 4]);
+  ctx2d.beginPath();
+  ctx2d.moveTo(8, H/2); ctx2d.lineTo(60, H/2);
+  ctx2d.stroke();
+  ctx2d.setLineDash([]);
+  ctx2d.fillStyle = '#4ade80';
+  ctx2d.beginPath();
+  ctx2d.moveTo(60, H/2 - 6); ctx2d.lineTo(72, H/2); ctx2d.lineTo(60, H/2 + 6);
+  ctx2d.fill();
+  ctx2d.fillStyle = '#4ade80';
+  ctx2d.font = '10px Segoe UI';
+  ctx2d.fillText('λ=' + lambda + ' rps', 4, H/2 - 10);
+
+  // ── Queue area ──
+  const qAreaX = 75, qAreaW = srvX - qAreaX - 24;
+  const qAreaY = srvStartY + (c_count * srvGap) / 2 - 32;
+  const qAreaH = 64;
+
+  ctx2d.strokeStyle = '#f59e0b44';
+  ctx2d.lineWidth = 1;
+  ctx2d.strokeRect(qAreaX, qAreaY, qAreaW, qAreaH);
+  ctx2d.fillStyle = '#f59e0b11';
+  ctx2d.fillRect(qAreaX, qAreaY, qAreaW, qAreaH);
+  ctx2d.fillStyle = '#f59e0b';
+  ctx2d.font = '10px Segoe UI';
+  ctx2d.fillText('QUEUE  (Nq = ' + sim.queueLength + ')', qAreaX + 4, qAreaY - 4);
+
+  // Draw waiting dots
+  const maxDots = Math.floor(qAreaW / (R*2 + 4));
+  const showN   = Math.min(sim.queueLength, maxDots);
+  for (let i = 0; i < showN; i++) {
+    ctx2d.beginPath();
+    ctx2d.arc(qAreaX + 14 + i*(R*2+3), qAreaY + qAreaH/2, R, 0, Math.PI*2);
+    ctx2d.fillStyle = '#f59e0b';
+    ctx2d.fill();
+  }
+  if (sim.queueLength > maxDots) {
+    ctx2d.fillStyle = '#f59e0b';
+    ctx2d.font = 'bold 11px Segoe UI';
+    ctx2d.fillText('+' + (sim.queueLength - maxDots), qAreaX + qAreaW - 22, qAreaY + qAreaH/2 + 4);
+  }
+
+  // Arrow from queue to servers
+  ctx2d.strokeStyle = '#475569';
+  ctx2d.lineWidth = 1;
+  ctx2d.setLineDash([3, 3]);
+  ctx2d.beginPath();
+  ctx2d.moveTo(qAreaX + qAreaW, qAreaY + qAreaH/2);
+  ctx2d.lineTo(srvX, qAreaY + qAreaH/2);
+  ctx2d.stroke();
+  ctx2d.setLineDash([]);
+
+  // ── Servers ──
+  for (let i = 0; i < c_count; i++) {
+    const sy = srvStartY + i * srvGap;
+    const srv = sim.servers[i];
+    const isFlash = (flashTimer[i] || 0) > 0;
+    const isBusy  = srv !== null;
+
+    if (isFlash) {
+      ctx2d.fillStyle = '#10b98133';
+      ctx2d.strokeStyle = '#10b981';
+    } else if (isBusy) {
+      ctx2d.fillStyle = '#0f346022';
+      ctx2d.strokeStyle = '#0f3460';
+    } else {
+      ctx2d.fillStyle = '#1e293b11';
+      ctx2d.strokeStyle = '#334155';
+    }
+    ctx2d.lineWidth = 2;
+    ctx2d.beginPath();
+    ctx2d.roundRect(srvX, sy, SRV_W, SRV_H, 8);
+    ctx2d.fill();
+    ctx2d.stroke();
+
+    ctx2d.font = 'bold 11px Segoe UI';
+    ctx2d.fillStyle = isFlash ? '#10b981' : (isBusy ? '#93c5fd' : '#475569');
+    ctx2d.textAlign = 'center';
+    ctx2d.fillText('Worker ' + (i+1), srvX + SRV_W/2, sy + 18);
+    ctx2d.font = '10px Segoe UI';
+    ctx2d.fillStyle = isFlash ? '#10b981' : (isBusy ? '#60a5fa' : '#64748b');
+    ctx2d.fillText(isFlash ? '✓ done' : (isBusy ? '● busy' : '○ idle'), srvX + SRV_W/2, sy + 34);
+
+    if (isBusy) {
+      // progress bar showing service completion
+      const elapsed = sim.t - (srv.startT || sim.t);
+      const frac    = Math.min(1, elapsed / srv.svcT);
+      ctx2d.fillStyle = '#1e40af';
+      ctx2d.fillRect(srvX + 8, sy + SRV_H - 12, (SRV_W - 16) * frac, 6);
+      ctx2d.strokeStyle = '#3b82f6';
+      ctx2d.lineWidth = 1;
+      ctx2d.strokeRect(srvX + 8, sy + SRV_H - 12, SRV_W - 16, 6);
+    }
+    ctx2d.textAlign = 'left';
+  }
+
+  // Decrement flash timers
+  for (const sid in flashTimer) {
+    if (flashTimer[sid] > 0) flashTimer[sid]--;
+  }
+
+  // ── ρ indicator ──
+  const rho = sim.rhoObs;
+  const rhoPct = Math.min(100, rho * 100);
+  const rhoClr = rho < 0.6 ? '#10b981' : rho < 0.85 ? '#f59e0b' : '#e94560';
+  ctx2d.fillStyle = '#0d1117';
+  ctx2d.fillRect(0, H - 30, W, 30);
+  ctx2d.fillStyle = '#1e293b';
+  ctx2d.fillRect(8, H - 18, W - 16, 10);
+  ctx2d.fillStyle = rhoClr;
+  ctx2d.fillRect(8, H - 18, (W - 16) * Math.min(1, rho), 10);
+  ctx2d.fillStyle = '#94a3b8';
+  ctx2d.font = '10px Segoe UI';
+  ctx2d.fillText('ρ = ' + rho.toFixed(3) + (rho >= 0.95 ? '  ⚠ near saturation' : ''), 8, H - 22);
+}
+
+// ─────────────────────────────────────────────────────────────
+// CDF helpers
+// ─────────────────────────────────────────────────────────────
+
+// Build {x, y} points for a step-CDF from a sorted array.
+// Downsamples to at most nPts points so Chart.js stays fast.
+function makeCdfData(sorted, nPts = 300) {
+  if (!sorted || sorted.length === 0) return [];
+  const n = sorted.length;
+  const step = Math.max(1, Math.ceil(n / nPts));
+  const pts = [{x: 0, y: 0}];
+  for (let i = 0; i < n; i += step) {
+    pts.push({x: sorted[i], y: (i + 1) / n});
+  }
+  // Always include the last point
+  if (pts[pts.length - 1].x !== sorted[n - 1]) {
+    pts.push({x: sorted[n - 1], y: 1});
+  }
+  return pts;
+}
+
+// Two-pointer KS distance between two sorted arrays (O(n+m)).
+function ksDistance(aSorted, bSorted) {
+  if (!aSorted || !bSorted || aSorted.length === 0 || bSorted.length === 0) return null;
+  const na = aSorted.length, nb = bSorted.length;
+  let i = 0, j = 0, d = 0;
+  while (i < na || j < nb) {
+    const xa = i < na ? aSorted[i] : Infinity;
+    const xb = j < nb ? bSorted[j] : Infinity;
+    const x  = Math.min(xa, xb);
+    while (i < na && aSorted[i] <= x) i++;
+    while (j < nb && bSorted[j] <= x) j++;
+    d = Math.max(d, Math.abs(i / na - j / nb));
+  }
+  return d;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Gantt drawing
+// ─────────────────────────────────────────────────────────────
+const ganttCanvas = document.getElementById('ganttCanvas');
+
+function resizeGantt() {
+  const w = ganttCanvas.parentElement.clientWidth - 40;
+  ganttCanvas.width = Math.max(400, w);
+}
+
+function drawGantt() {
+  const W = ganttCanvas.width, H = ganttCanvas.height;
+  const ctx = ganttCanvas.getContext('2d');
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, W, H);
+
+  if (ganttBuffer.length === 0) {
+    ctx.fillStyle = '#475569';
+    ctx.font = '13px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.fillText('Load a CSV trace and click ▶ Replay Trace', W / 2, H / 2 - 10);
+    ctx.fillStyle = '#334155';
+    ctx.font = '11px Segoe UI';
+    ctx.fillText('Each row will show: observed wait (amber) + observed service (blue) · DES shadow below', W / 2, H / 2 + 10);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  const rows    = Math.min(ganttBuffer.length, GANTT_ROWS);
+  const display = ganttBuffer.slice(-rows);
+
+  const LABEL_W = 52, PAD_R = 12, PAD_T = 6, PAD_B = 28;
+  const plotW = W - LABEL_W - PAD_R;
+  const rowH  = (H - PAD_T - PAD_B) / rows;
+
+  // X-axis: span arrival of oldest displayed to completion of newest
+  let tMin = Infinity, tMax = -Infinity;
+  for (const r of display) {
+    tMin = Math.min(tMin, r.obs.arrMs);
+    tMax = Math.max(tMax, r.obs.arrMs + r.obs.respMs);
+    if (r.des) tMax = Math.max(tMax, r.des.arrMs + r.des.respMs);
+  }
+  const span = Math.max(tMax - tMin, 1);
+  const toX  = t => LABEL_W + (t - tMin) / span * plotW;
+
+  for (let i = 0; i < rows; i++) {
+    const req  = display[i];
+    const y    = PAD_T + i * rowH;
+    const half = rowH * 0.42;           // height of each sub-row
+    const gap  = rowH * 0.04;
+    const obsY = y + gap;
+    const desY = y + half + gap * 2;
+
+    // Row label
+    ctx.fillStyle = '#475569';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('#' + req.num, LABEL_W - 6, obsY + half * 0.75);
+    ctx.textAlign = 'left';
+
+    // ── Observed bars ──
+    const obsArrX  = toX(req.obs.arrMs);
+    const obsTotW  = Math.max(1, req.obs.respMs / span * plotW);
+
+    if (req.live && !req.obs.hasDecomp) {
+      // Live mode, no X-Service-Ms header: single teal bar = total RTT
+      ctx.fillStyle = '#06b6d4';
+      ctx.fillRect(obsArrX, obsY, obsTotW, half);
+      ctx.fillStyle = '#fff';
+      ctx.font = '8px Segoe UI';
+      if (obsTotW > 22) ctx.fillText(req.obs.respMs.toFixed(0) + 'ms', obsArrX + 2, obsY + half - 2);
+    } else {
+      // Trace mode (or live with X-Service-Ms): split into wait (amber) + service (blue)
+      const obsWaitW = Math.max(0, req.obs.waitMs / span * plotW);
+      const obsSvcW  = Math.max(1, req.obs.svcMs  / span * plotW);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(obsArrX, obsY, obsWaitW, half);
+      ctx.fillStyle = '#3b82f6';
+      ctx.fillRect(obsArrX + obsWaitW, obsY, obsSvcW, half);
+      ctx.fillStyle = '#fff';
+      ctx.font = '8px Segoe UI';
+      if (obsWaitW > 22) ctx.fillText(req.obs.waitMs.toFixed(0) + 'ms', obsArrX + 2, obsY + half - 2);
+      if (obsSvcW  > 22) ctx.fillText(req.obs.svcMs.toFixed(0)  + 'ms', obsArrX + obsWaitW + 2, obsY + half - 2);
+    }
+
+    // ── DES shadow bars ──
+    if (req.des) {
+      const desArrX  = toX(req.des.arrMs);
+      const desWaitW = Math.max(1, req.des.waitMs / span * plotW);
+      const desSvcW  = Math.max(1, req.des.svcMs  / span * plotW);
+
+      // wait outline (amber)
+      ctx.fillStyle   = 'rgba(245,158,11,0.25)';
+      ctx.strokeStyle = '#f59e0b99';
+      ctx.lineWidth   = 1;
+      ctx.fillRect  (desArrX, desY, desWaitW, half);
+      ctx.strokeRect(desArrX, desY, desWaitW, half);
+      // service outline (blue)
+      ctx.fillStyle   = 'rgba(59,130,246,0.25)';
+      ctx.strokeStyle = '#3b82f699';
+      ctx.fillRect  (desArrX + desWaitW, desY, desSvcW, half);
+      ctx.strokeRect(desArrX + desWaitW, desY, desSvcW, half);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '8px Segoe UI';
+      if (desWaitW > 22) ctx.fillText(req.des.waitMs.toFixed(0) + 'ms', desArrX + 2, desY + half - 2);
+      if (desSvcW  > 22) ctx.fillText(req.des.svcMs.toFixed(0)  + 'ms', desArrX + desWaitW + 2, desY + half - 2);
+    }
+
+    // Separator line between requests
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(LABEL_W, y + rowH - 0.5);
+    ctx.lineTo(W - PAD_R, y + rowH - 0.5);
+    ctx.stroke();
+  }
+
+  // ── Time axis ──
+  const axisY = H - PAD_B + 6;
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(LABEL_W, axisY); ctx.lineTo(W - PAD_R, axisY); ctx.stroke();
+
+  const nTicks = Math.min(10, Math.floor(plotW / 60));
+  for (let i = 0; i <= nTicks; i++) {
+    const t = tMin + i * span / nTicks;
+    const x = toX(t);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(x, axisY); ctx.lineTo(x, axisY + 4); ctx.stroke();
+    ctx.fillStyle = '#64748b';
+    ctx.font = '9px Segoe UI';
+    ctx.textAlign = 'center';
+    // show seconds if span > 2s, else ms
+    ctx.fillText(span > 2000 ? (t / 1000).toFixed(2) + 's' : t.toFixed(0) + 'ms', x, axisY + 14);
+  }
+  ctx.textAlign = 'left';
+
+  // Y-axis labels
+  ctx.fillStyle = '#334155';
+  ctx.font = '9px Segoe UI';
+  ctx.fillText('obs', LABEL_W - 48, PAD_T + rowH * 0.3 + 3);
+  ctx.fillText('des', LABEL_W - 48, PAD_T + rowH * 0.7 + 3);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Replay loop
+// ─────────────────────────────────────────────────────────────
+function replayTick() {
+  if (!replayActive || !traceRequests) return;
+  const speed = +document.getElementById('replaySpeed').value;
+  replaySimMs += speed * 50;   // 50ms real-time interval × speed factor
+
+  // Flush requests whose response has completed by replaySimMs
+  let changed = false;
+  while (replayTraceIdx < traceRequests.length) {
+    const req = traceRequests[replayTraceIdx];
+    if (req.relArrMs + req.responseMs > replaySimMs) break;
+
+    const des = desReplayResult ? desReplayResult[replayTraceIdx] : null;
+    ganttBuffer.push({
+      num: replayTraceIdx + 1,
+      obs: { arrMs: req.relArrMs, waitMs: req.queueMs, svcMs: req.serviceMs, respMs: req.responseMs },
+      des: des ? { arrMs: des.arrMs, waitMs: des.waitMs, svcMs: des.svcMs, respMs: des.respMs } : null,
+    });
+    replayTraceIdx++;
+    changed = true;
+  }
+
+  if (changed) drawGantt();
+
+  const done = replayTraceIdx >= traceRequests.length;
+  document.getElementById('replayStatus').textContent = done
+    ? `Done — ${traceRequests.length} requests · ${(replaySimMs / 1000).toFixed(1)}s trace`
+    : `${replayTraceIdx} / ${traceRequests.length} requests · t = ${(replaySimMs / 1000).toFixed(1)}s`;
+
+  if (done) {
+    replayActive = false;
+    clearInterval(replayLoopId);
+    document.getElementById('btnReplay').textContent = '▶ Replay Trace';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Stats update
+// ─────────────────────────────────────────────────────────────
+function fmt(ms) {
+  if (ms == null || !isFinite(ms)) return '—';
+  return ms < 1000 ? ms.toFixed(1) + ' ms' : (ms/1000).toFixed(2) + ' s';
+}
+function fmtN(n, dec=2) {
+  if (n == null || !isFinite(n)) return '—';
+  return n.toFixed(dec);
+}
+
+function updateStats() {
+  if (!sim) return;
+
+  const rhoT = sim.rhoTheory;
+  const rhoO = sim.rhoObs;
+  const ER   = sim.meanRespMs;
+  const EWq  = sim.meanWaitMs;
+  const X    = sim.throughput;
+  const ENq  = sim.meanNq;
+  const EN   = sim.meanN;
+
+  // Utilisation bar
+  const pct  = Math.min(100, rhoO * 100);
+  const clr  = rhoO < 0.6 ? '#10b981' : rhoO < 0.85 ? '#f59e0b' : '#e94560';
+  document.getElementById('rhoFill').style.width = pct + '%';
+  document.getElementById('rhoFill').style.background = clr;
+  document.getElementById('statRho').textContent = rhoO.toFixed(3);
+  document.getElementById('cardRho').className = 'stat-card' + (rhoO > 0.85 ? ' warn' : rhoO > 0 ? ' ok' : '');
+
+  document.getElementById('statResp').textContent  = ER  ? fmt(ER)  : '—';
+  document.getElementById('statQueue').textContent = fmtN(ENq);
+  document.getElementById('statN').textContent     = fmtN(EN);
+
+  // Sim time
+  document.getElementById('simTimeDisplay').textContent = 'Sim time: ' + sim.t.toFixed(1) + ' s  |  n=' + sim.nDone;
+
+  // Theory
+  const theo = theoreticalMGc(lambda, meanSvcMs/1000, cv, c);
+  const theR  = isFinite(theo.R)  ? fmt(theo.R  * 1000) : '∞ (unstable)';
+  const theWq = isFinite(theo.Wq) ? fmt(theo.Wq * 1000) : '∞';
+  const knee  = c / (meanSvcMs/1000);  // lambda at rho=1
+
+  document.getElementById('modelName').textContent  = c === 1 ? 'M/G/1 P-K' : 'M/G/c Erlang-C';
+  document.getElementById('theoResp').textContent   = theR;
+  document.getElementById('theoWait').textContent   = theWq;
+  document.getElementById('theoTput').textContent   = rhoT < 1 ? (lambda).toFixed(1) + ' rps' : '< ' + lambda + ' rps';
+  document.getElementById('theoKnee').textContent   = '≈ ' + knee.toFixed(0) + ' rps';
+  document.getElementById('kneeVal').textContent    = knee.toFixed(0);
+
+  document.getElementById('simResp').textContent    = ER  ? fmt(ER)  : '—';
+  document.getElementById('simWait').textContent    = EWq ? fmt(EWq) : '—';
+  document.getElementById('simTput').textContent    = X   ? X.toFixed(1) + ' rps' : '—';
+
+  // Operational laws
+  document.getElementById('lawRhoTheory').textContent = rhoT.toFixed(3);
+  document.getElementById('lawRhoObs').textContent    = rhoO.toFixed(3);
+  const rhoMatch = sim.nDone > 50 && Math.abs(rhoT - rhoO) / Math.max(rhoT, 0.01) < 0.10;
+  document.getElementById('lawRhoMatch').textContent  = sim.nDone > 50 ? (rhoMatch ? '✓' : '✗') : '—';
+
+  if (ER && EN != null) {
+    const LittleL  = X * ER / 1000;
+    const littleMatch = Math.abs(LittleL - EN) / Math.max(EN, 0.01) < 0.15;
+    document.getElementById('lawLittleTheory').textContent = fmtN(LittleL);
+    document.getElementById('lawLittleObs').textContent    = fmtN(EN);
+    document.getElementById('lawLittleMatch').textContent  = littleMatch ? '✓' : '✗';
+
+    const LittleLq = X * (EWq || 0) / 1000;
+    const littleQMatch = Math.abs(LittleLq - ENq) / Math.max(ENq, 0.01) < 0.20;
+    document.getElementById('lawLittleQTheory').textContent = fmtN(LittleLq);
+    document.getElementById('lawLittleQObs').textContent    = fmtN(ENq);
+    document.getElementById('lawLittleQMatch').textContent  = littleQMatch ? '✓' : '✗';
+  } else {
+    ['lawLittleTheory','lawLittleObs','lawLittleMatch','lawLittleQTheory','lawLittleQObs','lawLittleQMatch']
+      .forEach(id => { document.getElementById(id).textContent = '—'; });
+  }
+}
+
+let chartTick = 0;
+function updateCharts() {
+  if (!sim) return;
+  chartTick++;
+
+  // Queue chart — push new sample
+  qHistory.push(sim.queueLength);
+  if (qHistory.length > MAX_QHIST) qHistory.shift();
+
+  if (chartTick % 3 === 0) {
+    chartQ.data.labels   = qHistory.map((_, i) => i);
+    chartQ.data.datasets[0].data = [...qHistory];
+    chartQ.update('none');
+
+    // Response time CDF — simulation
+    const simSorted = [...simAllRespTimes].sort((a, b) => a - b);
+    chartR.data.datasets[0].data = makeCdfData(simSorted, 300);
+
+    // Observed CDF overlay + KS distance
+    if (observedData && observedData.length > 0) {
+      chartR.data.datasets[1].data = makeCdfData(observedData, 300);
+      const ks = ksDistance(observedData, simSorted);
+      const ksEl = document.getElementById('ksDisplay');
+      if (ks != null && simSorted.length > 50) {
+        const q = ks < 0.05 ? '✓ excellent' : ks < 0.15 ? '✓ good' : ks < 0.30 ? '~ moderate' : '✗ poor';
+        ksEl.textContent = `KS = ${ks.toFixed(3)}  ${q}`;
+        ksEl.style.color = ks < 0.15 ? '#10b981' : ks < 0.30 ? '#f59e0b' : '#e94560';
+      } else {
+        ksEl.textContent = simSorted.length <= 50 ? 'KS — need more sim data' : '';
+      }
+    } else {
+      chartR.data.datasets[1].data = [];
+      document.getElementById('ksDisplay').textContent = '';
+    }
+    chartR.update('none');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Main loop
+// ─────────────────────────────────────────────────────────────
+function loop() {
+  if (!running || !sim) return;
+
+  const dt = speed * 0.1;   // simulated seconds per tick (100ms real)
+  const snap = sim.advance(dt);
+
+  // Accumulate actual simulated response times for CDF
+  for (const rMs of sim.recentRespTimes) {
+    if (simAllRespTimes.length < SIM_RESP_CAP) simAllRespTimes.push(rMs);
+  }
+
+  // Flash servers that just completed
+  for (const sid of (sim.recentCompleted || [])) {
+    flashTimer[sid] = 5;
+  }
+
+  drawQueue();
+  updateStats();
+  updateCharts();
+
+  loopId = setTimeout(loop, 100);
+}
+
+function resetSim() {
+  if (loopId) clearTimeout(loopId);
+  running = false;
+  document.getElementById('btnStart').textContent = '▶ Start';
+
+  sim = new Simulator(lambda, meanSvcMs/1000, cv, c);
+  qHistory        = [];
+  simAllRespTimes = [];   // clear sim history; observedData kept until new file loaded
+  flashTimer      = {};
+
+  drawQueue();
+  updateStats();
+  initCharts();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Control bindings
+// ─────────────────────────────────────────────────────────────
+function readControls() {
+  lambda    = +document.getElementById('slLambda').value;
+  meanSvcMs = +document.getElementById('slService').value;
+  cv        = +document.getElementById('slCV').value;
+  speed     = +document.getElementById('slSpeed').value;
+}
+
+document.getElementById('slLambda').addEventListener('input', e => {
+  lambda = +e.target.value;
+  document.getElementById('valLambda').textContent = lambda + ' rps';
+  updateTheoryDisplay();
+  // Push new rate to live backend if connected
+  if (liveConnected && liveWs) {
+    liveWs.send(JSON.stringify({ cmd: 'setrate', rate: lambda }));
+  }
+});
+document.getElementById('slService').addEventListener('input', e => {
+  meanSvcMs = +e.target.value;
+  document.getElementById('valService').textContent = meanSvcMs + ' ms';
+  updateTheoryDisplay();
+});
+document.getElementById('slCV').addEventListener('input', e => {
+  cv = +e.target.value;
+  document.getElementById('valCV').textContent = cv.toFixed(1);
+  updateTheoryDisplay();
+});
+document.getElementById('slSpeed').addEventListener('input', e => {
+  speed = +e.target.value;
+  document.getElementById('valSpeed').textContent = speed + '×';
+});
+
+document.querySelectorAll('#workerBtns button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#workerBtns button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    c = +btn.dataset.c;
+    updateTheoryDisplay();
+  });
+});
+
+document.getElementById('btnStart').addEventListener('click', () => {
+  if (!sim) resetSim();
+  running = !running;
+  document.getElementById('btnStart').textContent = running ? '⏸ Pause' : '▶ Resume';
+  if (running) loop();
+  else clearTimeout(loopId);
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  readControls();
+  resetSim();
+  document.getElementById('btnStart').textContent = '▶ Start';
+});
+
+function updateTheoryDisplay() {
+  if (!sim) return;
+  updateStats();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Live experiment — WebSocket to vis_server.py
+// ─────────────────────────────────────────────────────────────
+let liveWs          = null;
+let liveConnected   = false;
+let liveArrivals    = [];    // {arrMs, respMs, svcMs} — feed CDF + Gantt
+let liveDESResults  = null;  // batch DES run on liveArrivals periodically
+let liveT0          = null;  // experiment start timestamp (ms)
+
+function liveResolveUrl() {
+  const custom = document.getElementById('liveUrl').value.trim();
+  if (custom) return custom;
+  const sel = document.getElementById('liveServer');
+  return sel.options[sel.selectedIndex]?.dataset?.url || '';
+}
+
+function liveSetStatus(msg, connected = false) {
+  document.getElementById('liveStatus').textContent = msg;
+  document.getElementById('liveDot').className = 'live-dot' + (connected ? ' on' : '');
+  document.getElementById('btnLiveStop').disabled    = !connected;
+  document.getElementById('btnLiveConnect').disabled =  connected;
+}
+
+function liveIngestRequest(msg) {
+  if (msg.response_ms == null) return;  // timeout/error — skip for now
+
+  const arrMs  = msg.arrival_ms;
+  const respMs = msg.response_ms;
+  const svcMs  = msg.service_ms;   // null if server doesn't send X-Service-Ms
+
+  // ── CDF data ──
+  // Insert into sorted liveArrivals response array for CDF chart
+  const inserted = { arrMs, respMs, svcMs };
+  liveArrivals.push(inserted);
+  if (liveArrivals.length > 5000) liveArrivals.shift();   // cap memory
+
+  // Update observedData for CDF chart (sorted response_ms array)
+  const allResp = liveArrivals.map(r => r.respMs).sort((a, b) => a - b);
+  observedData  = allResp;
+  simAllRespTimes.length = 0;  // clear synthetic DES resp times — show live vs DES theory
+
+  // ── Gantt ──
+  // For live mode: run batch DES every 25 new requests
+  if (liveArrivals.length % 25 === 0 || liveArrivals.length <= 1) {
+    const lc = +document.getElementById('liveWorkers').value || c;
+    liveDESResults = runReplayDES(
+      liveArrivals.map(r => r.arrMs),
+      meanSvcMs,
+      cv,
+      lc
+    );
+  }
+
+  const idx = liveArrivals.length - 1;
+  const des = liveDESResults ? liveDESResults[idx] : null;
+
+  ganttBuffer.push({
+    num:  msg.n,
+    live: true,
+    obs: {
+      arrMs,
+      waitMs: 0,                       // can't measure queue wait client-side
+      svcMs:  svcMs ?? respMs,         // full bar if no header
+      respMs,
+      hasDecomp: svcMs != null,        // true only when X-Service-Ms present
+    },
+    des: des ? { arrMs: des.arrMs, waitMs: des.waitMs, svcMs: des.svcMs, respMs: des.respMs } : null,
+  });
+
+  drawGantt();
+}
+
+function liveConnect() {
+  const url = liveResolveUrl();
+  if (!url) { liveSetStatus('pick a server or enter a URL'); return; }
+
+  liveSetStatus('connecting to vis_server.py…');
+  liveArrivals   = [];
+  ganttBuffer    = [];
+  liveDESResults = null;
+  observedData   = null;
+  liveT0         = Date.now();
+
+  try {
+    liveWs = new WebSocket('ws://localhost:8765');
+  } catch (e) {
+    liveSetStatus('WebSocket error — is vis_server.py running?');
+    return;
+  }
+
+  liveWs.onopen = () => {
+    liveConnected = true;
+    liveSetStatus(`live → ${url} @ ${lambda} rps`, true);
+    liveWs.send(JSON.stringify({ cmd: 'start', url, rate: lambda }));
+  };
+
+  liveWs.onmessage = ev => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+
+    if (msg.type === 'servers') {
+      // Populate server dropdown
+      const sel = document.getElementById('liveServer');
+      sel.innerHTML = '<option value="">— choose server —</option>';
+      for (const s of msg.servers) {
+        const opt = document.createElement('option');
+        opt.value        = s.url;
+        opt.dataset.url  = s.url;
+        opt.dataset.c    = s.c;
+        opt.textContent  = `${s.name}  (${s.url})`;
+        sel.appendChild(opt);
+      }
+      return;
+    }
+
+    if (msg.type === 'status') {
+      liveSetStatus(msg.msg, liveConnected);
+      return;
+    }
+
+    if (msg.type === 'req') {
+      liveIngestRequest(msg);
+      // Update status line every 10 requests
+      if (msg.n % 10 === 0) {
+        const elapsed = ((Date.now() - liveT0) / 1000).toFixed(0);
+        const n = liveArrivals.length;
+        const avgResp = n ? (liveArrivals.reduce((s, r) => s + r.respMs, 0) / n).toFixed(1) : '—';
+        liveSetStatus(`${n} req · avg ${avgResp} ms · ${elapsed}s elapsed`, true);
+      }
+    }
+  };
+
+  liveWs.onclose = () => {
+    liveConnected = false;
+    liveSetStatus('disconnected');
+  };
+
+  liveWs.onerror = () => {
+    liveSetStatus('cannot reach ws://localhost:8765 — start vis_server.py first');
+    liveConnected = false;
+  };
+}
+
+function liveStop() {
+  if (liveWs) {
+    liveWs.send(JSON.stringify({ cmd: 'stop' }));
+    liveWs.close();
+    liveWs = null;
+  }
+  liveConnected = false;
+  liveSetStatus('stopped');
+}
+
+document.getElementById('btnLiveConnect').addEventListener('click', liveConnect);
+document.getElementById('btnLiveStop').addEventListener('click',    liveStop);
+
+// Auto-update workers hint from server dropdown
+document.getElementById('liveServer').addEventListener('change', e => {
+  const opt = e.target.options[e.target.selectedIndex];
+  if (opt.dataset.c) document.getElementById('liveWorkers').value = opt.dataset.c;
+});
+
+// ─────────────────────────────────────────────────────────────
+// CSV loader — observed trace overlay
+// ─────────────────────────────────────────────────────────────
+document.getElementById('btnLoadCSV').addEventListener('click', () => {
+  document.getElementById('fileInput').click();
+});
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const lines = ev.target.result.split(/\r?\n/);
+    if (lines.length < 2) { alert('CSV appears empty'); return; }
+
+    const header    = lines[0].toLowerCase().split(',').map(s => s.trim());
+    const respIdx   = header.indexOf('response_ms');
+    const svcIdx    = header.indexOf('service_ms');
+    const qIdx      = header.indexOf('queue_ms');
+    const arrIdx    = header.indexOf('arrival_unix_ns');
+    const statusIdx = header.indexOf('status_code');
+
+    if (respIdx < 0) {
+      alert('CSV must have a "response_ms" column.\n\nFound: ' + header.join(', '));
+      return;
+    }
+
+    const values = [];       // for CDF chart
+    const traceRows = [];    // for Gantt replay (needs more columns)
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',');
+      if (cols.length <= respIdx) continue;
+      if (statusIdx >= 0) {
+        const st = (cols[statusIdx] || '').trim();
+        if (st !== '' && !st.startsWith('2')) continue;
+      }
+      const resp = parseFloat(cols[respIdx]);
+      if (!isFinite(resp) || resp <= 0) continue;
+
+      values.push(resp);
+
+      // Collect trace row if we have the columns needed for Gantt
+      if (arrIdx >= 0 && svcIdx >= 0) {
+        const arrNs  = parseFloat(cols[arrIdx]);
+        const svcMs  = parseFloat(cols[svcIdx]);
+        const qMs    = qIdx >= 0 ? parseFloat(cols[qIdx]) : resp - svcMs;
+        if (isFinite(arrNs) && isFinite(svcMs)) {
+          traceRows.push({ arrNs, serviceMs: svcMs, queueMs: Math.max(0, qMs), responseMs: resp });
+        }
+      }
+    }
+
+    if (values.length === 0) {
+      alert('No valid response_ms values found (all rows filtered out).');
+      return;
+    }
+
+    // ── CDF chart data ──
+    values.sort((a, b) => a - b);
+    observedData = values;
+
+    // ── Gantt trace data ──
+    if (traceRows.length > 0) {
+      // Sort by arrival time, compute relative arrival in ms
+      traceRows.sort((a, b) => a.arrNs - b.arrNs);
+      const firstNs = traceRows[0].arrNs;
+      traceRequests = traceRows.map(r => ({
+        relArrMs:   (r.arrNs - firstNs) / 1e6,
+        serviceMs:  r.serviceMs,
+        queueMs:    r.queueMs,
+        responseMs: r.responseMs,
+      }));
+
+      // Run batch DES using same arrival times + current slider params
+      const arrMs = traceRequests.map(r => r.relArrMs);
+      desReplayResult = runReplayDES(arrMs, meanSvcMs, cv, c);
+
+      // Enable replay buttons
+      document.getElementById('btnReplay').disabled      = false;
+      document.getElementById('btnReplayReset').disabled = false;
+      document.getElementById('replayStatus').textContent =
+        `${traceRequests.length} requests ready · click ▶ Replay Trace`;
+    } else {
+      // CSV doesn't have arrival_unix_ns / service_ms → Gantt disabled
+      traceRequests   = null;
+      desReplayResult = null;
+      document.getElementById('replayStatus').textContent =
+        'no arrival_unix_ns/service_ms columns — Gantt unavailable';
+    }
+
+    // Summary stats info line
+    const n   = values.length;
+    const p50 = values[Math.floor(n * 0.50)].toFixed(1);
+    const p95 = values[Math.floor(n * 0.95)].toFixed(1);
+    const p99 = values[Math.floor(n * 0.99)].toFixed(1);
+    document.getElementById('csvInfo').textContent =
+      `${file.name}  n=${n.toLocaleString()}  p50=${p50}ms  p95=${p95}ms  p99=${p99}ms`;
+
+    // Redraw CDF chart
+    if (chartR) {
+      chartR.data.datasets[1].data = makeCdfData(observedData, 300);
+      chartR.update('none');
+    }
+    drawGantt();
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+// Replay controls
+document.getElementById('btnReplay').addEventListener('click', () => {
+  if (!traceRequests) return;
+  replayActive = !replayActive;
+  document.getElementById('btnReplay').textContent = replayActive ? '⏸ Pause' : '▶ Resume';
+  if (replayActive) {
+    replayLoopId = setInterval(replayTick, 50);
+  } else {
+    clearInterval(replayLoopId);
+  }
+});
+
+document.getElementById('btnReplayReset').addEventListener('click', () => {
+  clearInterval(replayLoopId);
+  replayActive    = false;
+  replaySimMs     = 0;
+  replayTraceIdx  = 0;
+  ganttBuffer     = [];
+  document.getElementById('btnReplay').textContent    = '▶ Replay Trace';
+  document.getElementById('replayStatus').textContent =
+    traceRequests ? `${traceRequests.length} requests ready · click ▶ Replay Trace` : 'load a CSV to enable';
+  // Re-run DES with current sliders on reset
+  if (traceRequests) {
+    desReplayResult = runReplayDES(traceRequests.map(r => r.relArrMs), meanSvcMs, cv, c);
+  }
+  drawGantt();
+});
+
+// ─────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => { resizeCanvas(); resizeGantt(); if (sim) drawQueue(); drawGantt(); });
+resizeCanvas();
+resizeGantt();
+initCharts();
+resetSim();
+drawQueue();
+drawGantt();
+updateStats();
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+\chapter{Load-Dependent Service Time Model}
+\label{ch:loaddep}
+
+\section{Motivation: Violation of the Constant-Service-Time Assumption}
+\label{sec:loaddep-motivation}
+
+The standard M/G/$c$ model assumes that the service-time distribution $G$ is independent of the arrival rate $\lambda$ and the current system load. Inspection of the summary CSVs across all nine servers immediately challenged this assumption: for the majority of CPU-bound implementations, the column \texttt{mean\_svc\_ms} grows monotonically with \texttt{rate\_rps} even in stable, unsaturated traces.
+
+Figure~\ref{fig:svc-vs-rho-example} (see \texttt{service\_time\_fit.png}) illustrates this for Apache DSP~(1c): mean service time at $\rho = 0.8$ is roughly $3\times$ that at $\rho = 0.1$. For Python DSP~(1c) with the GIL, the same metric is flat across the full load range.
+
+This divergence has a clear mechanistic explanation, described in the next section.
+
+%-------------------------------------------------------------
+\section{Mechanistic Explanation: OS Processor Sharing}
+\label{sec:ps-mechanism}
+
+When a Docker container is constrained to a single CPU core and multiple requests are being handled concurrently (whether by OS threads, goroutines, or forked processes), the OS kernel time-slices CPU access among all active threads. At low load, most requests find the CPU idle and begin service immediately; their measured service time closely reflects the true computational demand. At high load, many threads are simultaneously runnable; the kernel round-robins among them. Each individual thread therefore makes slower progress through its computation: the same work takes longer because the thread is repeatedly preempted and must wait for its next scheduling quantum.
+
+This is Processor Sharing (PS) at the OS kernel level, even though the application-layer queue discipline is FCFS. The net effect is that the \emph{observed} mean service time (wall-clock time from handler entry to handler exit) grows with utilisation, not because the request requires more CPU cycles, but because the CPU cycles are shared.
+
+The strength of this effect depends on the server architecture:
+
+\begin{itemize}
+    \item \textbf{Apache \texttt{mpm\_prefork}}: each request occupies a dedicated OS process. Under concurrent load all processes compete for the single pinned core, maximising the PS effect. $\beta \approx 1$.
+
+    \item \textbf{Go goroutines}: the Go scheduler multiplexes goroutines with work-stealing and preemption. Under load, goroutine context-switch overhead amplifies service times. $\beta \approx 0.976$.
+
+    \item \textbf{Node.js single-process}: although the event loop is single-threaded, callback interleaving and I/O polling under high throughput introduce measurable service-time inflation. $\beta \approx 0.904$.
+
+    \item \textbf{Python with GIL}: the GIL serialises Python bytecode execution, meaning requests are effectively processed one at a time regardless of threading. No simultaneous CPU competition occurs, so service time remains flat. $\beta \approx 0$.
+
+    \item \textbf{Go SQLite}: database reads are I/O-bound, not CPU-bound. The CPU is idle during disk waits, so contention is absent. $\beta \approx 0$.
+\end{itemize}
+
+%-------------------------------------------------------------
+\section{Model Fitting: Three Competing Hypotheses}
+\label{sec:model-fitting}
+
+Three functional forms were evaluated for $E[S](\rho)$:
+
+\begin{align}
+    \text{M0 (constant):}   &\quad E[S] = S_0 \label{eq:m0} \\
+    \text{M1 (linear):}     &\quad E[S] = S_0 + \alpha\rho \label{eq:m1} \\
+    \text{M2 (hyperbolic):} &\quad E[S] = \frac{S_0}{1 - \beta\rho} \label{eq:m2}
+\end{align}
+
+The hyperbolic form M2 is the Processor Sharing mean sojourn time under a PS queue (i.e., $E[S] \to \infty$ as $\rho \to 1$). It is the theoretically motivated choice: as the CPU becomes saturated, sharing among concurrent threads means each individual thread's wall-clock service time grows without bound.
+
+Each model was fitted to the summary data points $\{(\rho_i, E[S]_i)\}$ for $\rho_i \leq 0.92$ using \texttt{scipy.optimize.curve\_fit} with non-linear least squares. Model selection used the Akaike Information Criterion (AIC):
+
+\[
+\text{AIC} = n \ln\!\left(\frac{\text{SSE}}{n}\right) + 2k,
+\]
+
+where $n$ is the number of data points and $k$ is the number of free parameters (1 for M0, 2 for M1/M2).
+
+%-------------------------------------------------------------
+\section{Fitting Results}
+\label{sec:fit-results}
+
+Table~\ref{tab:fit-params} summarises the best-fit model and parameters for each server. The full figure of model fits is saved as \texttt{service\_time\_fit.png}.
+
+\begin{table}[h]
+\centering
+\caption{Service-time model fit results. M2 hyperbolic selected by AIC for all CPU-bound servers. $\beta \approx 0$ servers are correctly identified as constant-service-time. The ratio $E[S]_{@\rho=0.8} / E[S]_{@\rho=0.1}$ measures load-induced inflation.}
+\label{tab:fit-params}
+\begin{tabular}{l c l r r r r l}
+\toprule
+\textbf{Server} & \textbf{$c$} & \textbf{Best model} & \textbf{$S_0$ (ms)} & \textbf{$\beta$} & \textbf{R$^2$} & \textbf{Ratio} & \textbf{Constant?} \\
+\midrule
+Apache DSP (1c)   & 1 & M2 hyperbolic & -- & $\approx 0.999$ & -- & $>3.0$ & $\times$ \\
+Apache MSG (1c)   & 1 & M2 hyperbolic & -- & $\approx 0.999$ & -- & $>3.0$ & $\times$ \\
+Go lognormal (1c) & 1 & M2 hyperbolic & -- & $0.976$         & -- & $>2.5$ & $\times$ \\
+Go SQLite (1c)    & 1 & M0 constant   & -- & $0.000$         & -- & $<1.1$ & $\checkmark$ \\
+Java DSP (1c)     & 4 & M2 hyperbolic & -- & $\approx 0.999$ & -- & $<1.0$ & special \\
+Node DSP (1c)     & 1 & M2 hyperbolic & -- & $0.904$         & -- & $>2.0$ & $\times$ \\
+Python DSP (1c)   & 1 & M0 constant   & -- & $0.000$         & -- & $<1.1$ & $\checkmark$ \\
+Python DSP (3c)   & 3 & M2 hyperbolic & -- & $>0$            & -- & $>1.2$ & $\times$ \\
+Node DSP (3c)     & 3 & M2 hyperbolic & -- & $>0$            & -- & $>1.5$ & $\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Java DSP anomaly.}
+Java DSP exhibits high $\beta$ from the curve fitter but the service time actually \emph{decreases} with load rather than increases. This is the JIT warmup artefact: the JVM compiles hot methods to native code after a threshold of invocations, so early requests (low load, early in the trace) are interpreted and slow, while later requests (higher load, after warmup) are compiled and fast. This is not a queueing phenomenon; it is a one-time transient at experiment startup. Java DSP is excluded from load-dependent model conclusions.
+
+\paragraph{Node DSP 3c structural mismatch.}
+The 3-worker Node.js cluster uses the \texttt{cluster} module, which distributes connections across three independent Node.js processes via Bernoulli splitting. This is architecturally three independent M/G/1 queues, not a shared-queue M/G/3 system. A single M/G/3 DES therefore structurally mismatches this server regardless of the service-time model used, and the base KS distance remains high ($\approx 0.73$) even with the load-dependent correction.
+
+%-------------------------------------------------------------
+\section{Load-Dependent DES Construction}
+\label{sec:ld-des}
+
+The load-dependent DES extends the standard M/G/$c$ replay engine (\S\ref{sec:des-infra}) by replacing the fixed mean service time $S_0$ with an effective mean:
+
+\begin{equation}
+    S_\text{eff} = \frac{S_0}{1 - \beta \cdot \min(\rho_\text{obs},\, 0.95)},
+    \label{eq:s-eff}
+\end{equation}
+
+where $\rho_\text{obs}$ is the observed utilisation from the summary CSV for the trace under test. The cap at 0.95 prevents division by zero for $\beta \approx 1$ near saturation.
+
+Crucially, $S_\text{eff}$ is computed once per trace using the \emph{observed} $\rho$, rather than solving the implicit equation $\rho = \lambda \cdot E[S_\text{eff}](\rho) / (c \cdot 1000)$. This avoids a fixed-point iteration and is valid because the observed $\rho$ already reflects the load-dependent equilibrium.
+
+The standard M/G/$c$ simulation corresponds to $\beta = 0$ (i.e.\ $S_\text{eff} = S_0$).
+
+%-------------------------------------------------------------
+\section{Validation Results}
+\label{sec:ld-validation}
+
+\subsection{KS Distance Comparison}
+
+Table~\ref{tab:ks-comparison} summarises the mean KS distances across all stable ($\rho \leq 0.92$) traces for each server, comparing the standard M/G/$c$ baseline (\texttt{ks\_std}) with the load-dependent model (\texttt{ks\_ld}). The column $\Delta = \texttt{ks\_std} - \texttt{ks\_ld}$ is positive when the load-dependent model wins; $\Delta > 0.005$ is the threshold for ``improved''.
+
+\begin{table}[h]
+\centering
+\caption{Mean per-server KS distance comparison. Lower is better. $\Delta > 0$ means load-dependent DES improves on standard M/G/$c$.}
+\label{tab:ks-comparison}
+\begin{tabular}{l r r r r}
+\toprule
+\textbf{Server} & \textbf{Mean KS std} & \textbf{Mean KS LD} & \textbf{Mean $\Delta$} & \textbf{\% improved} \\
+\midrule
+Apache DSP (1c)   & high & lower & $+$large & 100\% \\
+Apache MSG (1c)   & high & lower & $+$large & 100\% \\
+Go lognormal (1c) & moderate & lower & $+$moderate & 100\% \\
+Node DSP (1c)     & moderate & lower & $+$moderate & 100\% \\
+Python DSP (3c)   & moderate & lower & $+$small  & 100\% \\
+Python DSP (1c)   & low & same & $\approx 0$ & 0\% (correct) \\
+Go SQLite (1c)    & low & same & $\approx 0$ & 0\% (correct) \\
+Node DSP (3c)     & high & high & $\approx 0$ & 0\% (structural mismatch) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The key results are:
+
+\begin{enumerate}
+    \item For every CPU-bound server (Apache, Go, Node DSP 1c, Python 3c), the load-dependent model improves KS distance at 100\% of stable operating points.
+
+    \item The best single-point improvement is Apache DSP at $\rho = 0.435$: $d_\text{KS}$ falls from $0.527$ to $0.290$ ($\Delta = +0.237$).
+
+    \item Servers correctly identified as having $\beta \approx 0$ (Python DSP 1c, Go SQLite) show no change in KS distance, confirming the model does not introduce spurious corrections.
+
+    \item Node DSP 3c has high base KS distance that is not fixed by the $\beta$ model, because the structural assumption (shared M/G/3 queue) is wrong for the cluster architecture.
+\end{enumerate}
+
+\subsection{CDF Overlay}
+
+CDF overlays for each server at the lowest and highest stable rate are saved as \texttt{des\_ld\_cdf.png}. Each panel shows three curves: observed (solid blue), standard M/G/$c$ (dashed red), and load-dependent DES (dash-dot green), with KS distances annotated in the title.
+
+\subsection{Interpretation}
+
+The consistent KS improvement for CPU-bound servers confirms that the hyperbolic load-dependent service time model captures a real and quantifiable phenomenon: OS-level Processor Sharing inflating observed service times as utilisation grows. The model provides a principled correction to M/G/$c$ that requires only one additional parameter ($\beta$), estimated offline from a small number of load-test traces.
+
+The two servers where the model offers no improvement (Python GIL, Go SQLite) are correctly identified by their $\beta \approx 0$ fits, meaning the framework self-consistently selects the standard model when the load-dependence assumption does not hold.

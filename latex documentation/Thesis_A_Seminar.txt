@@ -1,0 +1,313 @@
+Thesis A: Modelling the 
+impact of resources on 
+docker containers
+E N H A N C I N G  S Y S T E M S  M O D E L L I N G  T E A C H I N G  E X P E R I E N C E  
+W I T H  R E A L  W O R L D  D A T A  A N D  A P P L I C A T I O N S
+
+INTRODUCTION AND PROJECT 
+OVERVIEW
+
+Project Aims
+Limitations of COMP9334 Teaching
+A capacity planning course at UNSW (COMP9334) lacks  practical experimentationand 
+measurements from real systems to complement all its theories on prediction.
+System Requirements:
+A platform that could provide the students the opportunity to be able to learn and apply the 
+theories for the predicting performance of various systems with their own personal 
+computers. That would include giving them resources that are accessible and aren’t too 
+difficult (time consuming or costly) to set up. The system should offer the practical 
+demonstration of various prediction and modelling theories from the course.
+Adjusting System Resources
+CPU, memory, and workload levels are adjusted to study effects on system performance.
+Hands-on Learning Benefits
+Collecting metrics and building models help students link theory with real-world practice.
+
+Literature Survey and Background  
+learning
+• Looking at modern and popular capacity planning practices in the industry 
+that the students could perhaps emulate.
+• Learning capacity planning concepts (resource parameters, workload, 
+operational laws, queueing theory, discrete event simulation).
+• Integration of Capacity planning and Monitoring Tools, comparing them 
+w.r.t cost, accessibility, and complexity.
+• Looking at teaching practices at other institutions, seeing what they use to 
+help students model real systems and compare them with real data.
+• Surveying tools for collecting data that could be used for discrete event 
+simulations.
+
+
+BACKGROUND CONCEPTS AND 
+LITERATURE REVIEW
+
+Where X(j) = Throughput at device j, S(j) = mean service time at j, 
+V(j) = Visit ratio, D(j) = total service time a job requires at device j, 
+N = number of jobs, X(0) = System throughput, M = number of concurrent users, Z = Think 
+time. λ = Arrival rate
+Practical Application of these content:
+OA Collects performance data and creates queueing network models. Helps identify bottlenecks and forecast system 
+behavior before deployment, improving design decisions.
+COMP9334 CONTENT
+Capacity utilization = λ / μ at steady state.
+
+Discrete Event 
+Simulation
+Discrete Event Simulation Overview
+DES models system changes at specific time points, ideal for complex 
+queueing analysis.
+Use of Real Experimental Data
+Docker-based web service data enhances DES accuracy with real-time 
+experimental inputs.I can use docker logs to do trace driven DES.
+Capacity Planning Concepts
+Capacity planning determines resources to maintain performance under 
+varying demand. Data on workload and latency from real life data, used 
+to simulate the system based on workload and capacity.
+Integration of Traditional and Modern Methods
+Combines analytical models with monitoring data and machine learning 
+for predictive planning.
+
+Industry shift toward machine learning–assisted capacity planning to 
+address scalability and dynamic workloads in cloud systems: 
+-> Vitui & Chen (2021) introduced MLASP, which leverages historical workload traces and performance 
+counters to train models predicting resource bottlenecks under varying CPU and memory allocations 
+— demonstrating improved forecasting accuracy compared to static models.
+ 
+-> Müller et al. (2022) applied supervised regression and anomaly detection to automate capacity 
+adjustments in enterprise IT systems, replacing manual threshold tuning.
+ These ML-driven approaches mirror real-world practices at large-scale providers (e.g., AWS, Google 
+Cloud) and suggest pedagogical value.
+->Marin (2023) demonstrated that teaching performance evaluation through operational laws (U = XS, 
+N = XR) and DES frameworks significantly improves conceptual understanding compared to purely 
+theoretical instruction.
+My take-away was students could replicate simplified ML pipelines on containerized platforms to 
+visualize prediction-driven resource scaling, or also do DES with real world data collected from docker 
+logs. The workload traces from the Docker logs can serve as the data the students work with.
+
+Monitoring Tools for modelling:
+Modern capacity analysis increasingly depends on a composite toolchain combining real-time 
+monitoring, metrics visualization, and load testing.
+->  Zhang et al. (2007) introduced R-Capriccio, an integrated tool uniting workload analysis, anomaly 
+detection, and forecasting — an early blueprint for modern systems like Prometheus and Grafana.
+-> In educational and experimental contexts, DocLite (Varghese et al., 2016) demonstrated lightweight 
+benchmarking for cloud containers, automating the extraction of metrics like CPU usage, I/O latency, and 
+throughput from Docker APIs.  Pairing cAdvisor (live container metrics), Prometheus (data storage and 
+queries), Grafana (visualization), and Vegeta (HTTP load generation) offers a cost-efficient, open-source 
+alternative with minimal setup overhead — ideal for academic capacity planning experiments.
+-> Comparative research (Casalicchio & Perciballi, 2017; Arango et al., 2017) also confirmed that Docker’s 
+overhead is low enough for teaching performance modeling without distorting key metrics.
+Conclusion:  So, I decided to use cadvisor for for showcasing live container metrics for my docker 
+applications. Then prometheus and grafana can be used later for doing more data visualisation and 
+analysis.
+
+PROJECT RELATED 
+PREPARATION: TOOLS AND 
+EXPERIMENTAL SETUP
+
+Experimental requirements:
+1️⃣ Generate workload → 2️⃣ Configure resources → 3️⃣ Measure performance → 4️⃣ Log for modelling
+• Workload Generation:
+ Vary request arrival patterns and processing demands by adjusting inter-arrival times and per-request 
+workload using Vegeta.
+• Resource Configuration:
+ Modify container resource limits such as CPU cores and thread counts to observe performance scaling 
+effects.
+• Performance Measurement:
+ Record response times from both real Docker runs and discrete-event simulations (DES) for comparison and 
+validation.
+• Data Logging:
+ Collect detailed logs of inter-arrival intervals, service times, and workload parameters to support DES 
+parameterization and analysis.
+
+Suitability of Docker as part of the 
+system
+• Docker is a compromised choice, but it is containerized so any modeling done 
+using its resources would not be heavily affected by various overheads or 
+background processes. It also provides reproducibility and resource isolation, 
+making it suitable for controlled experiments on CPU and memory allocation. 
+Moreover, Docker runs on most personal systems with minimal configuration, 
+meaning students can perform realistic experiments without requiring dedicated 
+hardware or administrative privileges.
+• This hands-on process helps them internalize key performance concepts such 
+as bottlenecks, utilization limits, and response -time growth under load.
+• They learn transferable skills in data analysis, workload characterization, and 
+model validation — the same methods used in research and industry for 
+performance engineering, cloud orchestration, and systems optimization.
+• Exposes them to containerization, telemetry, and observability tools that are 
+standard in production environments, bridging academic learning with 
+professional practice. 
+
+
+Monitoring and Load 
+Testing Tools
+Live Container Metrics
+cAdvisor collects live CPU, memory, I/O, and network metrics for 
+containers continuously.
+Data Storage and Querying
+Prometheus stores time-series data from cadvisor and provides 
+powerful querying capabilities for performance analysis.
+Performance Visualization
+Grafana creates dynamic dashboards to visualize trends and 
+performance metrics effectively from prometheus data.
+Load Generation and Testing
+Vegeta generates HTTP load simulating varying request rates for 
+controlled performance testing.
+
+Monitoring and Load 
+Testing Tools
+What cAdvisor does:
+cAdvisor is like a real-time probe living inside Docker. It
+• Monitors container resource usage (CPU, memory, I/O, network).
+• Exposes those metrics live at http://localhost:8081/metrics in both web UI 
+and Prometheus format.
+• Keeps a few minutes of data in memory (not meant for long-term storage).
+• Can’t easily do comparisons, alerts, or queries over time. (which is where 
+prometheus comes in. Then grafana has a more friendly UI for displaying 
+those very data.)
+What Prometheus + Grafana does:
+• Capture historical data for DES parameter fitting.
+• Analyze steady-state vs transient behavior.
+• Reuse datasets for ML-based capacity planning.
+• Provide teaching dashboards for students to interact with their own system 
+metrics.
+
+Experimental Setup
+Docker Compose Setup
+Docker Compose launches application, cAdvisor, Prometheus, and Grafana 
+services for monitoring . I'm using an HTTP -echo server as my app for this 
+very basic experiment.
+Cross-Platform Compatibility
+Setup runs on student machines including Windows with WSL 2, ensuring 
+broad accessibility.
+Load Testing with Vegeta
+Vegeta tool varies request rates to analyze application performance under 
+load. There is an alternative which was wrk 2 for workload generation: 
+https:/ /testdev.tools/wrk2/, which I could also explore later on.
+Metrics Visualization
+Metrics are collected and visualized to study latency and throughput impacts  
+using cadvisor. For now, I have not used used prometheus and grafana to 
+visualise the data I collected from cadvisor.
+
+
+Experimental Setup
+Vegeta:
+• Used Vegeta for generating workload. It has two modes, which are:
+o Open-loop → independent arrivals. (what I used)
+ Closed-loop → feedback-controlled arrivals., whose features are 
+listed below:
+Taken from https:/ /github.com/tsenart/vegeta 
+
+
+Experimental Setup
+Docker Experiment:
+i
+
+
+Demo
+
+CAdvisor core usage for 800 request per second
+Docker Experiment:
+This screenshot is from the cAdvisor page. It seems the 
+application is indeed cpu bound under heavy load.
+
+
+CAdvisor core usage for 1200 request per second
+Docker Experiment:
+
+
+CAdvisor core usage for 1600 request per second
+Docker Experiment:
+This screenshot is from the cAdvisor page. It seems the 
+application is indeed cpu bound under heavy load.
+
+
+Vegeta report
+Docker Experiment:
+That latency field in Vegeta’s output represents the total round-trip time per HTTP request.
+
+
+Vegeta report
+Request Rate 
+(req/s)
+Total Requests Mean Latency (ms) p50 (ms) p90 (ms) p95 (ms) p99 (ms) Max Latency (ms) Success (%)
+800 48,000 1.185 1.097 1.325 1.490 2.528 26.849 100
+1,200 72,000 1.287 1.159 1.480 1.648 4.223 24.758 100
+1,600 96,000 1.518 1.236 1.583 1.860 6.959 93.737 100
+It showed stable median latency ≈ 1.2 ms, but 99th percentile (p99) explodes queueing onset.
+• Queueing model predictions match empirical data.
+• Tail latencies (p99) are sensitive indicators of overload.
+• Docker’s overhead is minimal.
+
+My experimental setup analysis
+Real system component DES model equivalent
+Vegeta load generator (open-loop) Poisson arrival process with rate ( λ )
+HTTP Echo server (hashicorp/http-
+echo)
+Single server processing one request at 
+a time
+Docker CPU quota = 1 core Service capacity limited to one server 
+channel
+Request completion time (from logs) Service time distribution ( S )
+cAdvisor / Prometheus metrics Data source for estimating ( λ,μ,U,R)
+
+We're likely modelling a single-server queue with Poisson arrivals(Vegeta open loop) and 
+general service times:
+So, basically it's a M/G/1 queue.
+• M → “Memoryless” arrivals → exponential inter-arrival times (thanks to open-loop Vegeta)
+• G → “General” service time distribution → because actual request processing time isn’t 
+perfectly exponential
+• 1 → one server/core/thread handling requests sequentially
+Here, my λ is the vegeta rate, S (service time distribution) is from the server-side response time 
+logs or cAdvisor CPU time per request. And I derive the service rate from the mean service 
+time, μ=1/E[S]. Then I can find my utilisation by comparing to cAdvisor total CPU usage, and 
+finally the Response times from my Vegeta latency reports.
+My experimental setup analysis
+
+Threats to Validity and accuracy
+Docker Desktop introduces variability due to host OS scheduling and 
+virtualization overhead.
+Network stack jitter and Prometheus scrape intervals limit temporal 
+resolution.
+CPU throttling granularity under cgroups can produce timing
+artifacts near saturation points
+To mitigate these risks, experiments were conducted under minimal 
+background load, CPU cores were pinned using --cpuset-cpus, and repeated 
+runs were averaged with confidence intervals calculated. While these 
+mitigations reduce variance, they do not eliminate all noise; thus, results are 
+interpreted as representative rather than absolute.
+
+THESIS B AND C PLAN
+
+Project Directions
+Discrete Event Simulation
+MVP: DES with experimental data to simulate queueing and validate models effectively.
+Further work:
+Option A: More advanced discrete event simulation.
+Option B: Machine learning predictions employs regression or neural networks to predict system performance 
+using key parameters.
+
+Thesis B and C
+Capacity Planning Resources
+Document common tools and summarize research papers to enrich capacity 
+planning education.
+Experiment Expansion
+Expand experiments to multi-core, multi-threaded, and horizontal scaling 
+environments.
+Comparing Approaches
+Compare the effectiveness of Discrete Event Simulation (DES) and Machine 
+Learning (ML) methods.
+
+Tracking progress:
+The results of the discrete event simulation will be matched against experimental data.
+
+Conclusion
+ Enhanced Learning Through Experimentation
+Integrating Docker experiments deepens student understanding of 
+system performance and resource use.
+Validation with Real Data
+Theoretical models are validated using actual data to improve accuracy 
+and relevance.
+Practical Framework Using Open-Source Tools
+Open-source tools create controlled, industry-like environments for 
+hands-on learning.
+Bridging Theory and Practice
+The project links academic concepts with practical applications, 
+enhancing instructional effectiveness.

@@ -1,0 +1,122 @@
+\chapter{Plans for Thesis B and C}
+\label{ch:projectplan}
+
+This chapter outlines the planned work for Thesis~B and Thesis~C over an
+eighteen--week period.\footnote{The exact calendar weeks may shift slightly
+with UNSW term dates, but the relative ordering of tasks will be preserved.}
+The project is organised around a single coherent case study: a
+containerised microservice whose behaviour under varying load and CPU limits
+is measured, modelled and used to teach capacity planning.  The work
+progresses from consolidating the existing experimental platform, through
+single-- and multi--server discrete--event simulation (DES), to hybrid
+ML--DES modelling, evaluation, and the development of teaching artefacts for
+COMP9334.
+
+\section{Work Breakdown}
+
+The work for Thesis~B and~C is grouped into the following major strands:
+
+\begin{enumerate}
+  \item \textbf{Stabilise and extend the experimental platform.}
+  Finalise the Docker--based microservice, Vegeta load--generation scripts,
+  and the cAdvisor/Prometheus/Grafana monitoring stack.  Automate
+  experiments to collect traces of arrival rates, service times, CPU
+  utilisation and tail latency for a representative range of loads and CPU
+  quotas.
+
+  \item \textbf{Single--server DES modelling and calibration.}
+  Build a baseline DES model (single core, single threaded service) that
+  reproduces measured behaviour under fixed load.  Calibrate the model
+  using empirical $\lambda$ and service--time samples, and validate it
+  against observed mean response time and utilisation.
+
+  \item \textbf{Multi--server and multicore DES extensions.}
+  Extend the simulator to multi--server (M/M/$c$ or M/G/$c$ style) cases,
+  modelling multiple service threads or container replicas.  Incorporate
+  simple models of CPU throttling to capture noisy--neighbour effects at
+  higher utilisation.
+
+  \item \textbf{Machine--learning models for service time and workload.}
+  Train ML models to (i) learn empirical service--time distributions as a
+  function of CPU quota and request rate (e.g.\ KDE, Gaussian mixture
+  models, gradient--boosted regressors), and (ii) forecast arrival rates
+  $\lambda(t)$ from historical monitoring data (e.g.\ ARIMA, gradient
+  boosting, or lightweight sequence models).  These models provide
+  distributional parameters and workload trajectories to feed into the DES
+  engine.
+
+  \item \textbf{Hybrid ML--DES integration and evaluation.}
+  Integrate the ML components with the DES simulator so that the simulator
+  operates on ML--estimated service--time distributions and forecasted
+  arrivals.  Evaluate how well the hybrid model predicts mean latency,
+  utilisation and tail behaviour (p95/p99) under different load and resource
+  scenarios, and compare against purely analytical and purely ML baselines.
+
+  \item \textbf{Educational artefacts and thesis consolidation.}
+  Design teaching materials (lab scripts, small exercises and
+  visualisations) that allow COMP9334 students to reproduce a subset of the
+  experiments on their own machines.  In parallel, draft and refine the
+  remaining thesis chapters (results, discussion and conclusions), ensuring
+  that the experimental and modelling work is clearly tied back to the
+  pedagogical goals.
+\end{enumerate}
+
+\section{Eighteen--Week Gantt Chart}
+
+The high--level schedule is shown in
+Figure~\ref{fig:gantt-thesis-bc}.  The timeline is divided into eighteen
+weeks, covering both Thesis~B and Thesis~C.  Some activities deliberately
+overlap: for example, data collection continues while the initial DES model
+is being developed, and writing begins before all experimental work is
+complete.
+
+\begin{figure}[h]
+  \centering
+  \begin{ganttchart}[
+      hgrid,
+      vgrid,
+      x unit=0.45cm,
+      y unit chart=0.6cm,
+      bar height=0.5,
+      bar label font=\small,
+      milestone label font=\small\bfseries
+    ]{1}{18}
+    \gantttitle{Weeks}{18} \\
+    \gantttitlelist{1,...,18}{1} \\
+
+    % Platform + data collection
+    \ganttgroup{Platform and data}{1}{3} \\
+    \ganttbar{Platform consolidation}{1}{2} \\
+    \ganttbar{Baseline data collection}{2}{3} \\
+
+    % DES work
+    \ganttgroup{DES modelling}{3}{7} \\
+    \ganttbar{Single--server DES model}{3}{5} \\
+    \ganttbar{Multi--server / multicore DES}{5}{7} \\
+
+    % ML models
+    \ganttgroup{ML models}{7}{11} \\
+    \ganttbar{Service--time modelling}{7}{10} \\
+    \ganttbar{Workload forecasting}{9}{11} \\
+
+    % Hybrid + eval
+    \ganttgroup{Hybrid ML--DES \& evaluation}{11}{16} \\
+    \ganttbar{ML--DES integration}{11}{14} \\
+    \ganttbar{Evaluation \& analysis}{14}{16} \\
+
+    % Teaching + write up
+    \ganttgroup{Teaching artefacts \& write--up}{16}{18} \\
+    \ganttbar{COMP9334 lab materials}{16}{17} \\
+    \ganttbar{Final thesis consolidation}{16}{18} \\
+
+    \ganttmilestone{Hybrid model stable}{14}
+  \end{ganttchart}
+  \caption{Planned timeline for Thesis~B and Thesis~C (18 weeks).}
+  \label{fig:gantt-thesis-bc}
+\end{figure}
+
+
+This schedule leaves limited but intentional slack near the end of the
+project (Weeks~16--18) to absorb unexpected implementation issues, repeat
+key experiments, and polish both the thesis document and the accompanying
+teaching materials.

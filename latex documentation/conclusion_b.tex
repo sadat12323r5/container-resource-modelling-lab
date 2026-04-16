@@ -1,0 +1,129 @@
+\chapter{Conclusion and Future Directions}
+\label{ch:conclusion_b}
+
+\section{Positioning Relative to MLASP}
+\label{sec:mlasp-comparison}
+
+The closest prior work to this thesis in the ML-assisted capacity-planning literature is MLASP~\cite{VituiChen2021} — a framework that uses machine learning to predict the configuration (number of Kafka partitions, consumer threads) needed to meet a target throughput SLO for a streaming workload. MLASP is a practical, production-evaluated system and represents the state of the art for ML-assisted capacity planning. Positioning this thesis relative to it is therefore a meaningful benchmark.
+
+The two frameworks share the same high-level goal — predicting when and how a system will saturate, so that resources can be allocated before SLOs are breached — but differ in approach, scope, and the nature of their contribution.
+
+\paragraph{Black-box prediction vs.\ mechanistic model.}
+MLASP treats the system as a black box: given a configuration and a workload, a trained ML model predicts whether throughput targets will be met. It does not explain \emph{why} a particular configuration is needed or what will happen as load increases beyond the training distribution. The $\beta$ model in this thesis, by contrast, derives from OS scheduling theory. The hyperbolic form $E[S](\rho) = S_0 / (1 - \beta\rho)$ is the Processor Sharing mean sojourn time formula, and $\beta$ has a direct physical interpretation: it measures the degree to which OS-level CPU time-slicing inflates wall-clock service time under concurrent load. This means the model can explain its predictions, identify when they will fail (I/O-bound workloads, GIL-constrained runtimes), and transfer to new server types without retraining.
+
+\paragraph{Falsifiability.}
+MLASP's ML model has no falsifiable structural predictions — it fits whatever pattern is in the training data. The $\beta$ model makes strong prior predictions: CPU-bound concurrent servers will have $\beta > 0$; I/O-bound servers will have $\beta \approx 0$; GIL-constrained runtimes will have $\beta \approx 0$. All nine servers in this study confirmed these predictions, including in directions not optimised for (e.g.\ Go lognormal showing $\beta = 0.976$ due to goroutine scheduler contention — an unexpected finding that the theory correctly anticipates).
+
+\paragraph{Calibration cost.}
+MLASP requires a labelled training dataset collected across a range of configurations and workloads, followed by model training, validation, and hyperparameter selection. The $\beta$ model requires a single load sweep (already performed as standard load testing) and a two-parameter nonlinear curve fit that runs in under a second. There is no training set, no held-out validation set, and no risk of overfitting.
+
+\paragraph{Domain.}
+MLASP targets Kafka streaming workloads — a message-broker architecture where throughput is the primary metric and latency is secondary. This thesis targets request-response microservices where tail latency and saturation thresholds are the primary concerns. The two domains have different bottleneck structures and different SLO definitions. The $\beta$ framework applies wherever service time can be measured per-request, which covers the vast majority of microservice architectures.
+
+\paragraph{The honest gap.}
+MLASP was evaluated on production Kafka clusters at scale with real traffic. This thesis was validated on a single laptop running Docker Desktop. That is the one dimension where MLASP is unambiguously ahead. Validating the $\beta$ framework on a cloud deployment with live production traffic — where scheduling jitter, noisy-neighbour effects, and non-stationary workloads are present — is the necessary next step before equivalent production claims can be made. The methodology is ready for that validation; the platform is not yet.
+
+In summary, this thesis contributes something MLASP does not: a \emph{mechanistic}, \emph{interpretable}, \emph{low-calibration-cost} capacity-planning model grounded in OS scheduling theory, validated across nine server types, and extensible to a proactive autoscaling pipeline. The two approaches are complementary rather than competing — MLASP excels at black-box configuration search across large parameter spaces; the $\beta$ model excels at explaining and predicting load-dependent degradation for request-response services with known concurrency structure.
+
+\section{Summary of Contributions}
+
+This thesis extended the lightweight Docker-based capacity-planning platform established in Thesis~A into a comprehensive multi-server experimental and modelling framework. The work produced the following concrete contributions.
+
+\subsection{Multi-Server Empirical Dataset}
+
+Nine server implementations spanning five languages (Go, Java, Node.js, Python, Apache/PHP), two concurrency configurations (1-core and multi-core), and two workload types (CPU-bound, I/O-bound) were each subjected to open-loop load testing at a full range of arrival rates. The resulting traces constitute a reproducible, publicly available dataset of response times, service times, and utilisation values for containerised microservices — a resource that does not currently exist in the literature for this combination of breadth and fine granularity.
+
+\subsection{Discovery and Characterisation of Load-Dependent Service Times}
+
+The central empirical finding is that the M/G/$c$ constant-service-time assumption is violated for all CPU-bound server implementations in the study. Mean service time grows with utilisation according to a hyperbolic model:
+
+\[
+E[S](\rho) = \frac{S_0}{1 - \beta\rho},
+\]
+
+where $\beta \in [0, 1)$ quantifies the degree of OS-level Processor Sharing caused by kernel CPU time-slicing among concurrent request handlers. The parameter $\beta$ can be estimated reliably from a small number of load-test traces and provides an interpretable characterisation of how CPU-bound a server's processing is.
+
+\subsection{Load-Dependent DES and KS Validation}
+
+A load-dependent variant of the M/G/$c$ discrete-event simulator was implemented and validated against all trace files using the Kolmogorov–Smirnov distance as the goodness-of-fit metric. The load-dependent model improved on the standard M/G/$c$ baseline at 100\% of stable operating points for every CPU-bound server (Apache DSP/MSG, Go lognormal, Node DSP 1c, Python DSP 3c), with the largest single-point KS improvement of $+0.237$. Servers with $\beta \approx 0$ (Python DSP 1c, Go SQLite) correctly showed no degradation, confirming that the framework self-consistently selects the standard model where the load-dependence assumption does not apply.
+
+\subsection{Interactive Visualisation and Live Load Tool}
+
+A browser-based visualiser (\texttt{visualiser.html}) was built to make the modelling framework accessible to students and researchers. It supports interactive DES parameter tuning, CSV trace upload with CDF overlay and live KS distance display, Gantt timeline replay of trace data, and a WebSocket live-load backend (\texttt{vis\_server.py}) that can fire real HTTP requests at any running Docker server and stream results to the browser. This toolchain satisfies the pedagogical goal set in Thesis~A: students can now observe, simulate, and validate capacity-planning behaviour all in one environment running on a personal computer.
+
+%-------------------------------------------------------------
+\section{Limitations}
+
+\paragraph{Fixed-point utilisation.}
+The load-dependent DES uses the observed $\rho$ from the summary CSV as a fixed calibration point rather than solving the implicit self-consistency equation $\rho = \lambda E[S](\rho)/(c \cdot 1000)$. This works well for validation against traces that were collected at known operating points but would require a fixed-point solver to predict behaviour at an \emph{a priori} unknown arrival rate.
+
+\paragraph{Structural mismatch for cluster architectures.}
+The Node.js \texttt{cluster} module distributes connections by Bernoulli splitting across independent worker processes, making it architecturally three independent M/G/1 queues rather than a shared-queue M/G/3 system. The M/G/$c$ DES cannot capture this correctly regardless of the service-time model. Extending the simulator to model independent parallel queues with probabilistic routing would be straightforward but was outside the scope of this thesis.
+
+\paragraph{Java JIT warmup.}
+Java DSP exhibits a transient decrease in service time with load due to JVM JIT compilation warming up hot methods. This is not a queueing phenomenon and cannot be captured by a stationary queueing model. A multi-phase model that distinguishes the JIT-cold from JIT-warm regime would be needed.
+
+\paragraph{Go SQLite two-stage queue.}
+Go SQLite is I/O-bound; requests queue at the CPU briefly and then queue again waiting for SQLite disk reads. A single-stage M/G/1 model underestimates tail latency because it cannot represent the two-stage waiting structure. A tandem queue model would be required for accurate tail-latency prediction.
+
+\paragraph{Docker Desktop overhead.}
+All experiments were run under Docker Desktop on Windows. The hypervisor layer introduces scheduling jitter that would not be present on a native Linux host. Timing measurements should be interpreted as representative of this platform class, not as absolute values.
+
+%-------------------------------------------------------------
+\section{Future Directions}
+
+The following directions represent natural extensions of this work, each addressing one of the limitations above or building on the modelling foundation established here.
+
+\paragraph{Fixed-point load-dependent DES for capacity forecasting.}
+Implementing the implicit equation solver $\rho^* = \lambda E[S](\rho^*) / (c \cdot 1000)$ would enable the load-dependent DES to predict performance at arrival rates not previously observed — the true capacity-planning use case. Bisection or Newton iteration on the scalar equation converges in very few iterations.
+
+\paragraph{Novel model directions.}
+The supervisor has suggested extending the modelling framework to more complex setups that are harder to model analytically and where novel queueing contributions are possible. Three candidate directions are:
+\begin{itemize}
+    \item \emph{Two-class priority M$^{[2]}$/G/1}: a system where background batch requests compete with interactive foreground requests under preemptive or non-preemptive priority. The interaction between priority classes under load-dependent service times has not been studied for containerised systems.
+    \item \emph{Tandem microservice queue}: a two-stage pipeline where requests flow through a CPU-bound front-end server followed by a database back-end (as in the Go SQLite setup). Modelling end-to-end tail latency for a tandem queue with load-dependent service at the first stage is an open problem.
+    \item \emph{Retry feedback loop}: a system where clients retry failed or slow requests, creating a feedback loop that can amplify congestion. Characterising the stability region and tail-latency behaviour of M/G/1 with retries under the hyperbolic service-time model would be a novel contribution.
+\end{itemize}
+
+\paragraph{Arrival-rate forecasting — the one genuine ML role.}
+The original Thesis~A plan included ARIMA/LSTM-based workload forecasting that was never implemented, because the service-time modelling work turned out not to need it: the hyperbolic $\beta$ model replaced the planned KDE/GMM approach with a simpler and more interpretable two-parameter fit. However, there is one place in the capacity-planning loop where ML is genuinely irreplaceable and where queueing theory has nothing to offer: predicting \emph{future} arrival rates.
+
+The $\beta$ model answers a static question — given $\lambda$ right now, what will $E[S](\rho)$, queue depth, and tail latency look like? It is an instantaneous predictor. The operationally useful question is different: what will $\lambda$ be in the next 5--15 minutes, and will that push the system past its saturation knee before an operator can respond? Answering this requires a time-series forecaster trained on historical arrival-rate data, which is precisely what ARIMA, Prophet, or a lightweight sequence model provides.
+
+The two components form a closed proactive loop:
+\begin{enumerate}
+    \item A time-series model (e.g.\ ARIMA or Prophet) trained on per-minute $\lambda$ values from Prometheus predicts $\hat{\lambda}(t + \Delta)$ for a horizon $\Delta$ (e.g.\ 10 minutes ahead).
+    \item The load-dependent DES evaluates: at $\hat{\lambda}$, what is the predicted $\rho$, mean response time, and p99? Does any metric breach the SLO threshold?
+    \item If yes, a scaling signal is raised before the queue builds, not after.
+\end{enumerate}
+
+Without the forecaster, the DES can only validate past behaviour. Without the DES, the forecaster has no model of how the system responds to a given $\lambda$. Neither component can trigger a proactive scaling decision alone.
+
+The data required for this already exists: the per-server summary CSVs contain \texttt{rate\_rps} time series, and Prometheus stores scrape-interval $\lambda$ traces for the duration of every load-test experiment. Implementing ARIMA on this data and feeding predictions into the load-dependent DES would complete the hybrid ML--DES pipeline originally planned for Thesis~B and represent a practical, deployable capacity-planning tool.
+
+\section{Scalability and Industrial Relevance}
+\label{sec:scalability}
+
+The framework developed in this thesis has scaling potential that extends well beyond its current single-machine, nine-server scope. This section documents why.
+
+\paragraph{$\beta$ as a universal service characterisation tool.}
+Any containerised service can be load-tested, a summary CSV produced, and $\beta$ estimated in minutes — without any knowledge of the server's internals. The parameter immediately answers a question that current observability stacks do not: is this service CPU-bound ($\beta \to 1$, service time will degrade with load) or I/O-bound and scheduling-isolated ($\beta \approx 0$, constant service time)? Prometheus and Grafana report CPU utilisation and latency percentiles, but they do not report whether the \emph{service time distribution itself} is shifting under load. That distinction is operationally important: a server with $\beta \approx 0$ can be scaled horizontally and the M/G/$c$ model applies directly; a server with $\beta \approx 1$ will degrade at each replica too, and the load-dependent correction is required for accurate capacity forecasting at any scale.
+
+\paragraph{Feedforward vs.\ feedback autoscaling.}
+The Kubernetes Horizontal Pod Autoscaler (HPA) is a feedback controller: it observes that CPU utilisation or request latency has already exceeded a threshold and then triggers scaling. By the time new pods pass readiness checks (typically 10--30 seconds), the queue has already built and SLOs have already been breached. The pipeline proposed here — ARIMA forecasts $\hat{\lambda}(t+\Delta)$, load-dependent DES predicts whether the forecasted rate will breach the SLO, scaling signal raised before demand arrives — is a feedforward controller. It acts on a prediction of future load, not a measurement of current overload. This architectural difference eliminates the reactive latency spike that is a fundamental limitation of threshold-based autoscalers. The framework provides the missing predictive layer that HPA does not have.
+
+\paragraph{Generality across server types.}
+The framework makes no assumptions about server language, framework, or workload semantics. $\beta$ is estimated empirically from load-test traces; the DES requires only $S_0$, $\beta$, CV, and $c$. This means the same pipeline can in principle be applied to any microservice in a production fleet. A fleet-wide deployment would: (i) run a brief load sweep for each service at deployment time to estimate $\beta$; (ii) store $(S_0, \beta, \text{CV}, c)$ in a service registry alongside standard metadata; (iii) feed these parameters into a shared DES-based capacity planner that evaluates SLO risk for each service given forecasted arrival rates. The per-service calibration cost is low; the shared infrastructure is reused.
+
+\paragraph{What remains to be done.}
+The gap between this thesis and a production-deployable system is well-defined and tractable:
+\begin{itemize}
+    \item \textbf{Fixed-point solver}: the current DES uses the observed $\rho$ from past traces. Predicting performance at an unobserved $\lambda$ requires solving $\rho^* = \lambda \cdot E[S](\rho^*) / (c \cdot 1000)$ — a scalar fixed-point equation solvable by bisection in a few iterations.
+    \item \textbf{Arrival-rate forecaster}: ARIMA or Prophet trained on Prometheus $\lambda$ time series. The data already exists.
+    \item \textbf{Native Linux validation}: all measurements in this thesis were collected under Docker Desktop on Windows. The hypervisor layer introduces scheduling jitter absent from native Linux deployments. Validating $\beta$ estimates on a bare-metal or cloud Linux host is necessary before any production deployment claim.
+\end{itemize}
+
+None of these are research problems — they are engineering tasks. The foundational discovery (that service times are load-dependent, that the effect is characterised by $\beta$, and that the hyperbolic model corrects the M/G/$c$ baseline) is already validated across nine server types. The path from this thesis to a deployable proactive autoscaling component is short and well-lit.
+
+\paragraph{COMP9334 teaching artefacts.}
+The visualiser is ready to use as a teaching tool. Lab exercises could be designed around: (i) loading a provided trace CSV, observing the KS gap between M/G/$c$ and reality, and tuning $\beta$ manually to improve fit; (ii) comparing two servers (e.g.\ Python vs.\ Apache) to see why one is constant and the other load-dependent; (iii) using the live mode to observe queueing behaviour develop in real time as the arrival rate is increased past saturation.
