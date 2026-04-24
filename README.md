@@ -108,7 +108,7 @@ identical; a value of 1 means they do not overlap at all. KS is unit-free and
 does not depend on the scale of response times, making it comparable across
 servers with very different service rates.
 
-In the CDF plots (`experiments/*/cdf.png`), the red double-headed arrow shows
+In the CDF plots (`data/experiments/*/cdf.png`), the red double-headed arrow shows
 the location and magnitude of the KS gap.
 
 ### Capacity knee
@@ -187,6 +187,167 @@ runtimes violate that assumption through scheduler, runtime, or database-lock
 contention. The remaining work is to turn these findings into formal models for
 the two non-standard architectures and to integrate them into the thesis
 narrative.
+
+---
+
+## Plots And Analysis
+
+This repository currently contains 13 generated plots: two cross-server
+load-dependent service-time figures in `results/figures/`, and one
+observed-vs-DES CDF overlay for each of the 11 experiment folders in
+`data/experiments/`. The root README includes all of them here so the visual
+evidence and interpretation can be reviewed without hunting through folders.
+
+### Cross-Server Load-Dependent Service-Time Results
+
+#### Service-Time Inflation Fit
+
+![Service-time fit across servers](results/figures/service_time_fit.png)
+
+This figure plots measured mean service time against nominal utilisation
+`rho0 = lambda*S0/c` for each server and overlays the fitted service-time model.
+It shows the core result of this term: several CPU-bound servers do not have
+constant service time as load increases. Apache DSP, Apache MSG, Go lognormal,
+Node DSP, and Python DSP 3-core show positive service-time growth; Python DSP
+1-core is nearly flat because the single Gunicorn worker/GIL path serialises
+execution; Go SQLite 1-core is mostly flat in mean service time but still fails
+standard single-stage queueing for structural reasons. This supports the
+load-dependent formulation `E[S](rho0) = S0 / (1 - beta*rho0)` as an empirical
+correction to the standard M/G/c assumption.
+
+#### Load-Dependent DES CDF Comparison
+
+![Observed vs standard DES vs load-dependent DES](results/figures/des_ld_cdf.png)
+
+This figure compares observed response-time CDFs against the standard M/G/c DES
+and the load-dependent DES at low and high stable rates. The key pattern is that
+the load-dependent DES shifts the simulated response distribution toward the
+observed one when service time grows with utilisation. The improvement is largest
+for the CPU-contention cases, especially Apache DSP and Python DSP 3-core. Cases
+with approximately constant service time, such as Python DSP 1-core, Java DSP
+3-core, and Node DSP 3-core, show little or no change, which is the expected
+control behaviour. Go SQLite remains a structural mismatch because a single
+application queue does not model the hidden SQLite/WAL lock queue.
+
+### Per-Server DES CDF Plots
+
+Each plot below overlays the observed response-time CDF with replay, bootstrap,
+and parametric DES predictions for every tested rate. Replay tests the queueing
+model itself; bootstrap tests sensitivity to service-time sample variance; and
+parametric tests whether a fitted distribution, usually lognormal, is adequate.
+
+#### Go Lognormal 1-Core
+
+![Go lognormal 1-core CDF](data/experiments/go_1c/cdf.png)
+
+This is the baseline control case. The server samples service times from a
+lognormal-like workload and behaves closest to the M/G/1 assumptions. Replay DES
+achieves very low KS distances across stable rates, showing that the DES engine
+and trace-driven arrival replay are valid when service time is independent and
+well described by the sampled distribution. Any remaining error is small and
+mostly due to runtime scheduling overhead and high-load service-time drift.
+
+#### Apache Messaging 1-Core
+
+![Apache messaging 1-core CDF](data/experiments/apache_msg_1c/cdf.png)
+
+Apache MSG shows a persistent KS floor because the PHP workers share a
+file-backed JSONL store protected by file locks. The standard M/G/1 model sees
+only one application queue, but the real system contains a hidden shared-resource
+queue around the file lock. This makes the CDF gap structural: changing the
+parametric distribution cannot remove the mismatch.
+
+#### Apache DSP-AES 1-Core
+
+![Apache DSP 1-core CDF](data/experiments/apache_dsp_1c/cdf.png)
+
+Apache DSP works reasonably at light load but deteriorates as utilisation grows.
+The CDF panels show the classic symptom of load-dependent service time: the DES
+predicts a response distribution that is too optimistic because it assumes the
+same service-time distribution at all rates. At saturation, worker processes
+competing on one CPU core inflate wall-clock service time and the M/G/1
+assumption collapses.
+
+#### Node.js DSP-AES 1-Core
+
+![Node.js DSP 1-core CDF](data/experiments/node_dsp_1c/cdf.png)
+
+Node.js 1-core has a single event loop, but the measured service distribution is
+not cleanly unimodal. Garbage collection, callback bookkeeping, and event-loop
+stalls create occasional large delays. The CDF mismatch is therefore strongest
+where the model tries to match the centre of the distribution using a smooth
+parametric service model. At very high load, queueing dominates and the relative
+impact of the service-shape mismatch becomes smaller.
+
+#### Python DSP-AES 1-Core
+
+![Python DSP 1-core CDF](data/experiments/python_dsp_1c/cdf.png)
+
+Python 1-core is the strongest constant-service-time control among the CPU-bound
+servers. Once cold-start effects are past, service time is near-deterministic
+because one Gunicorn worker executes the pure-Python DSP path serially. The CDF
+fit improves at moderate rates, supporting the interpretation that the GIL and
+single-worker design prevent the CPU competition seen in multi-process servers.
+
+#### Java DSP-AES 1-Core
+
+![Java DSP 1-core CDF](data/experiments/java_dsp_1c/cdf.png)
+
+Java 1-core is dominated by warm-up rather than queueing-model behaviour. The
+early interpreted/JIT-compilation phase creates a bimodal service-time
+distribution, which explains the large CDF gap at low rates. After warm-up, the
+JCE-accelerated AES path is very fast and tested utilisation remains low, so the
+main modelling issue is runtime phase change, not saturation.
+
+#### Go SQLite 1-Core
+
+![Go SQLite 1-core CDF](data/experiments/go_sqlite_1c/cdf.png)
+
+Go SQLite 1-core demonstrates that I/O-bound systems can fail standard M/G/1 for
+the same broad reason as CPU-bound systems: the visible application queue is not
+the whole queueing network. SQLite introduces an internal database lock/commit
+queue, so response time is shaped by both the Go request path and SQLite's
+serialised work. This points toward a two-stage tandem queue model.
+
+#### Node.js DSP-AES 3-Core
+
+![Node.js DSP 3-core CDF](data/experiments/node_dsp_3c/cdf.png)
+
+Node.js cluster mode is the clearest architectural mismatch. The plotted CDFs
+remain far from the shared M/G/3 prediction at all rates because the system is
+not one FIFO queue feeding three identical workers. It is closer to three
+independent event loops behind OS/Node connection dispatch, which behaves like
+Bernoulli splitting into multiple M/G/1 queues. Adding cores improves throughput
+but does not fix the distribution mismatch.
+
+#### Python DSP-AES 3-Core
+
+![Python DSP 3-core CDF](data/experiments/python_dsp_3c/cdf.png)
+
+Python 3-core is the best M/G/c success case. Three Gunicorn worker processes on
+three pinned cores behave like independent workers, and service time remains
+tight enough for the DES assumptions to hold. The CDF overlays are close at
+100-300 rps, validating the heap-based M/G/3 simulator and showing near-linear
+capacity scaling relative to the 1-core Python server.
+
+#### Java DSP-AES 3-Core
+
+![Java DSP 3-core CDF](data/experiments/java_dsp_3c/cdf.png)
+
+Java 3-core behaves similarly to Java 1-core: the tested rates are still far
+below the server's theoretical CPU capacity, so response-time shape is governed
+more by JVM warm-up/runtime variance than by queue build-up. Moving from 1-core
+to 3-core does not remove the JIT-induced distribution shape issue.
+
+#### Go SQLite 3-Core
+
+![Go SQLite 3-core CDF](data/experiments/go_sqlite_3c/cdf.png)
+
+Go SQLite 3-core improves throughput but does not become a clean M/G/3 system.
+WAL mode permits more concurrency than the 1-core SQLite case, but writes are
+still serialised internally. The CDFs show partial agreement at higher rates
+because queueing dominates, but the real architecture is still better described
+as application workers feeding a database lock stage.
 
 ---
 
