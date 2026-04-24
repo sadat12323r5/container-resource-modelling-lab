@@ -121,6 +121,85 @@ degradation earlier due to contention or service time growth.
 
 ---
 
+### Load-dependent service time
+
+Classical M/G/c assumes that service time is independent of load: a request that
+takes 2 ms at low traffic should still take 2 ms when the server is busy. The
+main discovery in this project is that this is often false for CPU-bound
+containerised services. When multiple handlers compete for the same pinned CPU
+core, the OS scheduler time-slices between them. Each request may need the same
+amount of CPU work, but its wall-clock service time increases because it receives
+only a fraction of the core at a time. This is the same intuition as
+**Processor Sharing (PS)** in queueing theory.
+
+The fitted model is:
+
+```text
+E[S](rho0) = S0 / (1 - beta*rho0)
+rho0      = lambda*S0/c
+```
+
+where:
+
+- `S0` is the base service time at near-zero load
+- `rho0` is nominal utilisation computed using `S0`, not the inflated measured
+  service time
+- `beta` measures load sensitivity: `beta = 0` means constant service time;
+  `beta` near 1 means strong processor-sharing-like inflation
+
+The standard DES samples service times directly from a fixed distribution. The
+load-dependent DES first computes an effective mean service time at the target
+load, then scales sampled service times so the simulated server reflects the
+observed service-time inflation.
+
+### Model-selection terms
+
+The load-dependent fitting scripts compare three candidate service-time models:
+
+| Model | Meaning |
+|---|---|
+| `M0` | Constant service time: `E[S] = S0` |
+| `M1` | Linear growth with utilisation |
+| `M2` | Hyperbolic growth: `E[S] = S0 / (1 - beta*rho0)` |
+
+The selected model is chosen using AIC, the **Akaike Information Criterion**.
+AIC rewards better fit but penalises extra parameters, so a more complex model
+is only selected if it improves the fit enough to justify the added complexity.
+
+### Runtime and architecture terms
+
+Some server-specific terms appear throughout the results:
+
+- **GIL**: Python's Global Interpreter Lock. In the 1-worker Python case it
+  serialises execution, which helps explain why service time stays nearly
+  constant.
+- **JIT**: Just-In-Time compilation. Java starts slower while the JVM compiles
+  hot code paths, creating a warm-up anomaly that is not a queueing effect.
+- **WAL**: SQLite Write-Ahead Logging. WAL allows more concurrency than simple
+  rollback journalling, but writes are still serialised, creating an internal
+  database-lock queue.
+- **Tandem queue**: a queueing network where a request passes through multiple
+  stages in sequence, such as an application worker followed by a database lock.
+- **Bernoulli splitting**: random routing of arrivals across multiple queues.
+  Node.js cluster is closer to three independent M/G/1 queues fed by a splitter
+  than one shared M/G/3 queue.
+
+### ML and autoscaling terms
+
+- **MLASP**: Machine Learning-Assisted Capacity Planning, the closest prior work
+  discussed in the thesis literature review.
+- **LOOCV**: Leave-One-Out Cross-Validation; train on all rate points except one,
+  predict the held-out point, and repeat.
+- **ARIMA/Prophet**: time-series forecasting methods that could predict future
+  arrival rate `lambda(t + delta)`.
+- **SLO**: Service-Level Objective, usually stated as a tail-latency target such
+  as "p99 response time below 100 ms."
+- **HPA**: Kubernetes Horizontal Pod Autoscaler. It reacts to current overload;
+  the future work proposed here is a feedforward loop that forecasts demand and
+  scales before queues build.
+
+---
+
 ## Research Agenda
 
 | Iteration | Focus | Status |
