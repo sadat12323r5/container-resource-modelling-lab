@@ -1,4 +1,4 @@
-name: base
+name: capacity_lab
 channels:
   - conda-forge
   - defaults
@@ -6,3 +6,7 @@ dependencies:
   - python=3.10
   - pandas
   - matplotlib
+  - numpy
+  - scipy
+  - requests
+  - cryptography

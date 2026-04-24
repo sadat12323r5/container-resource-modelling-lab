@@ -520,7 +520,7 @@ Capacity_lab/
 ## Dependencies
 
 ```bash
-pip install requests matplotlib cryptography
+pip install pandas numpy scipy matplotlib requests cryptography
 
 # Or via conda
 conda env create -f environment.yml
@@ -535,6 +535,16 @@ Python 3.10+ and Docker Desktop (Linux engine) required.
 
 These steps reproduce every file in `data/experiments/` from scratch. Each step is
 independent and idempotent (safe to re-run; existing output files are skipped).
+
+The guide has two levels:
+- **Analysis reproduction:** uses the committed traces in `data/experiments/` to
+  regenerate summaries, per-server CDFs, cross-server fit tables, and final
+  figures. This is fully reproducible from the repository.
+- **Raw experiment reproduction:** re-runs live Docker load tests. The current
+  `run_sweeps.py` automates the newer seven sweep groups; the older Go,
+  Apache MSG, Apache DSP, and Python 1-core traces are preserved in
+  `data/experiments/` and can be regenerated manually with the single-trace
+  commands below if needed.
 
 ### Step 1 — Start a server
 
@@ -642,6 +652,30 @@ Fits a polynomial regression model to predict `response_p99` from arrival rate
 using leave-one-out cross-validation (LOOCV — train on all rate points except
 one, predict the held-out point, repeat). Compares prediction error against DES
 replay. Requires `data/experiments/go_1c/` data.
+
+### Step 7 - Regenerate load-dependent service-time results
+
+These commands reproduce the two cross-server result tables and figures in
+`results/`:
+
+```bash
+python analysis/des/fit_service_time.py
+python analysis/des/des_load_dependent.py
+```
+
+Outputs:
+
+```text
+results/tables/service_time_fit_params.csv
+results/tables/des_ld_results.csv
+results/figures/service_time_fit.png
+results/figures/des_ld_cdf.png
+```
+
+`fit_service_time.py` estimates the base service time `S0` and the
+load-dependence parameter `beta` for each server. `des_load_dependent.py` then
+compares the standard M/G/c DES against the load-dependent DES using KS distance
+on the response-time CDF.
 
 ---
 
