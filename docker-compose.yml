@@ -1,6 +1,6 @@
 services:
   app:
-    build: ./server_single
+    build: ./servers/go_lognormal
     ports:
       - "8080:8080"
     cpuset: "0"
@@ -25,7 +25,7 @@ services:
       # Work calibration stability (bigger = steadier, slower startup)
       - CALIBRATE_ITERS=20000000
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
 
   apache:
@@ -45,9 +45,9 @@ services:
       - APACHE_MAX_MESSAGES=1000
       - APACHE_TRACE_CSV=/app/logs/apache_requests.csv
     volumes:
-      - ./apache:/var/www/html:ro
-      - ./apache/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
-      - "./logs and des:/app/logs"
+      - ./servers/apache_msg:/var/www/html:ro
+      - ./servers/apache_msg/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
+      - "./data/live_logs:/app/logs"
 
   apache-dsp:
     image: php:8.3-apache
@@ -64,9 +64,9 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/dsp_aes_requests.csv
     volumes:
-      - ./apache_dsp_aes:/var/www/html:ro
-      - ./apache_dsp_aes/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
-      - "./logs and des:/app/logs"
+      - ./servers/apache_dsp_aes:/var/www/html:ro
+      - ./servers/apache_dsp_aes/000-default.conf:/etc/apache2/sites-enabled/000-default.conf:ro
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # node-dsp (port 8084)
@@ -75,7 +75,7 @@ services:
   # Same DSP-AES pipeline as apache-dsp; different runtime.
   # -------------------------------------------------------------------------
   node-dsp:
-    build: ./node_dsp_aes
+    build: ./servers/node_dsp_aes
     ports:
       - "8084:3000"
     cpuset: "0"
@@ -90,7 +90,7 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/node_dsp_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # python-dsp (port 8085)
@@ -99,7 +99,7 @@ services:
   # Same DSP-AES pipeline; Python runtime (slower, different service-time CV).
   # -------------------------------------------------------------------------
   python-dsp:
-    build: ./python_dsp_aes
+    build: ./servers/python_dsp_aes
     ports:
       - "8085:5000"
     cpuset: "0"
@@ -113,7 +113,7 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/python_dsp_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # java-dsp (port 8086)
@@ -122,7 +122,7 @@ services:
   # Same DSP-AES pipeline; JVM runtime with JIT compilation.
   # -------------------------------------------------------------------------
   java-dsp:
-    build: ./java_dsp_aes
+    build: ./servers/java_dsp_aes
     ports:
       - "8086:3000"
     cpuset: "0"
@@ -139,7 +139,7 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/java_dsp_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # go-sqlite (port 8087)
@@ -148,7 +148,7 @@ services:
   # Tests whether DES accuracy depends on service type or architecture.
   # -------------------------------------------------------------------------
   go-sqlite:
-    build: ./go_sqlite
+    build: ./servers/go_sqlite
     ports:
       - "8087:8080"
     cpuset: "0"
@@ -162,7 +162,7 @@ services:
       - SQLITE_READ_ROWS=20
       - CSV_LOG_PATH=/app/logs/go_sqlite_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # =========================================================================
   # Multi-core variants (3 cores: cpuset=0,1,2  cpus=3.0)
@@ -175,7 +175,7 @@ services:
   # Architecture: M/G/3 — 3 event loops, each blocking on FIR.
   # -------------------------------------------------------------------------
   node-dsp-mc:
-    build: ./node_dsp_aes
+    build: ./servers/node_dsp_aes
     ports:
       - "8088:3000"
     cpuset: "0,1,2"
@@ -191,14 +191,14 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/node_dsp_mc_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # python-dsp-mc (port 8089) — Gunicorn 3 workers
   # Architecture: M/G/3 — 3 WSGI processes, each serialising one request.
   # -------------------------------------------------------------------------
   python-dsp-mc:
-    build: ./python_dsp_aes
+    build: ./servers/python_dsp_aes
     ports:
       - "8089:5000"
     cpuset: "0,1,2"
@@ -213,14 +213,14 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/python_dsp_mc_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # java-dsp-mc (port 8090) — Java ThreadPoolExecutor, 3 threads
   # Architecture: M/G/3 — true thread-parallel, same as java-dsp but c=3.
   # -------------------------------------------------------------------------
   java-dsp-mc:
-    build: ./java_dsp_aes
+    build: ./servers/java_dsp_aes
     ports:
       - "8090:3000"
     cpuset: "0,1,2"
@@ -237,14 +237,14 @@ services:
       - DSP_AES_KEY=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       - DSP_TRACE_CSV=/app/logs/java_dsp_mc_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   # -------------------------------------------------------------------------
   # go-sqlite-mc (port 8091) — Go SQLite, 3 worker goroutines
   # Architecture: M/G/3 with I/O service (SQLite WAL, 3 connections).
   # -------------------------------------------------------------------------
   go-sqlite-mc:
-    build: ./go_sqlite
+    build: ./servers/go_sqlite
     ports:
       - "8091:8080"
     cpuset: "0,1,2"
@@ -259,7 +259,7 @@ services:
       - SQLITE_WORKERS=3
       - CSV_LOG_PATH=/app/logs/go_sqlite_mc_requests.csv
     volumes:
-      - "./logs and des:/app/logs"
+      - "./data/live_logs:/app/logs"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
@@ -293,4 +293,3 @@ services:
 
 volumes:
   grafana-data:
-

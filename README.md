@@ -152,7 +152,7 @@ went beyond the plan — and what remains open.
 | | Detail |
 |---|---|
 | **Promised** | Build a baseline M/G/1 DES that reproduces measured behaviour under fixed load. Calibrate using empirical arrival rate λ and service-time samples. Validate against observed mean response time and utilisation. |
-| **Delivered** | `logs and des/single_server_des.py` implements a trace-driven M/G/1 FCFS simulator with three service-time modes. The KS distance between the simulated and observed response-time CDFs is used as the primary accuracy metric. Operational law checks (Utilisation Law `U = XS`, Little's Law `N = XR`) are computed and reported. |
+| **Delivered** | `analysis/des/single_server_des.py` implements a trace-driven M/G/1 FCFS simulator with three service-time modes. The KS distance between the simulated and observed response-time CDFs is used as the primary accuracy metric. Operational law checks (Utilisation Law `U = XS`, Little's Law `N = XR`) are computed and reported. |
 | **Beyond plan** | Three validation modes (replay / bootstrap / parametric) were not in the original plan. Replay isolates queueing-model accuracy from distribution-fit error; bootstrap quantifies sensitivity to sample variance; parametric tests the lognormal/gamma/Weibull assumption. This decomposition allows the source of any KS degradation to be diagnosed precisely — something the plan did not anticipate needing. The goroutine scheduling floor (`--queue-offset 0.006 ms`) was identified and corrected as a systematic measurement artefact. |
 | **Remaining** | Validation against purely analytical M/M/1 and Pollaczek–Khinchine (P-K) formula predictions has not been done explicitly. The plan called for comparing DES against analytical baselines; currently DES is only compared against ground truth and against the ML polynomial regression baseline. |
 
@@ -161,7 +161,7 @@ went beyond the plan — and what remains open.
 | | Detail |
 |---|---|
 | **Promised** | Extend the simulator to M/M/c or M/G/c cases modelling multiple service threads or container replicas. Incorporate simple CPU throttling models to capture noisy-neighbour effects at higher utilisation. |
-| **Delivered** | `logs and des/multi_server_des.py` implements a heap-based M/G/c event-driven simulator supporting arbitrary worker counts. Four server configurations run with `c = 3` workers (Node.js cluster, Gunicorn, Java ThreadPool, Go SQLite WAL). The DES is validated against all four using the same three modes as the single-server case. |
+| **Delivered** | `analysis/des/multi_server_des.py` implements a heap-based M/G/c event-driven simulator supporting arbitrary worker counts. Four server configurations run with `c = 3` workers (Node.js cluster, Gunicorn, Java ThreadPool, Go SQLite WAL). The DES is validated against all four using the same three modes as the single-server case. |
 | **Beyond plan** | The multi-core experiments revealed that throughput scaling is architecture-dependent (Python 3.0×, Go SQLite 2.2×, Node.js 2.3×) and that DES accuracy in the multi-core setting is entirely determined by service-time distribution shape rather than worker count. This was not a hypothesis in the plan — it emerged from the data. |
 | **Remaining** | CPU throttling models (noisy-neighbour effects at high utilisation) have not been incorporated into the DES engine. The plan explicitly listed this; it remains open. |
 
@@ -228,51 +228,21 @@ access patterns.
 
 ## Repository Layout
 
-```
+See [PROJECT_MAP.md](PROJECT_MAP.md) for the current modular workspace map.
+
+```text
 Capacity_lab/
-├── server_single/          # Go lognormal server (port 8080)
-├── apache/                 # PHP messaging backend (port 8082)
-├── apache_dsp_aes/         # PHP DSP-AES server (port 8083)
-├── node_dsp_aes/           # Node.js DSP-AES server (port 8084)
-├── python_dsp_aes/         # Python/Gunicorn DSP-AES server (port 8085)
-├── java_dsp_aes/           # Java ThreadPool DSP-AES server (port 8086)
-├── go_sqlite/              # Go SQLite I/O server (port 8087)
-│
-├── experiments/            # All results — one subfolder per server config
-│   ├── go_1c/              #   Raw traces, DES outputs, summary CSV, cdf.png, README
-│   ├── apache_msg_1c/
-│   ├── apache_dsp_1c/
-│   ├── node_dsp_1c/
-│   ├── python_dsp_1c/
-│   ├── java_dsp_1c/
-│   ├── go_sqlite_1c/
-│   ├── node_dsp_3c/
-│   ├── python_dsp_3c/
-│   ├── java_dsp_3c/
-│   └── go_sqlite_3c/
-│
-├── logs and des/
-│   ├── single_server_des.py    # M/G/1 trace-driven DES engine
-│   ├── multi_server_des.py     # M/G/c trace-driven DES engine
-│   └── <server>_requests.csv  # Live log files written by running containers
-│
-├── des_utils.py                # Shared helpers: pct, ks_distance, make_cdf, read_csv_col
-├── poisson_load_generator.py   # Load generator for Go lognormal server
-├── apache_load.py              # Load generator for Apache messaging server
-├── dsp_aes_load.py             # Load generator for all DSP-AES servers
-├── sqlite_load.py              # Load generator for Go SQLite server
-├── run_sweeps.py               # Orchestrates all load sweeps across all servers
-├── run_des_all.py              # Runs DES on all traces; writes summary CSVs
-├── plot_all_cdfs.py            # Generates cdf.png in each experiments/ subfolder
-├── write_server_readmes.py     # Regenerates experiments/*/README.md
-├── ml_baseline.py              # ML vs DES comparison (polynomial regression, LOOCV)
-├── docker-compose.yml
-├── environment.yml             # Conda environment spec
-└── EXPERIMENTS.md              # Full experiment log and cross-server analysis
++-- servers/              # Docker service implementations
++-- analysis/             # DES, load generators, orchestration, reporting, visualisation
++-- data/                 # Experiment traces and live container CSV logs
++-- results/              # Cross-server figures and CSV result tables
++-- docs/                 # Experiment log, difficulties log, thesis source, references
++-- docker-compose.yml
++-- environment.yml
++-- README.md
 ```
 
 ---
-
 ## Dependencies
 
 ```bash
@@ -289,7 +259,7 @@ Python 3.10+ and Docker Desktop (Linux engine) required.
 
 ## Full Replication Guide
 
-These steps reproduce every file in `experiments/` from scratch. Each step is
+These steps reproduce every file in `data/experiments/` from scratch. Each step is
 independent and idempotent (safe to re-run; existing output files are skipped).
 
 ### Step 1 — Start a server
@@ -321,25 +291,21 @@ inter-arrival times) at a fixed average rate. Poisson arrivals are standard for
 validating M/G/c models because the M/G/c queue assumes Poisson input.
 
 Each sweep runs for 90 s per rate point and writes a trace CSV to
-`experiments/<folder>/`. Existing files are skipped automatically.
+`data/experiments/<folder>/`. Existing files are skipped automatically.
 
 ```bash
-python run_sweeps.py --servers go           # 50/100/200/400 rps
-python run_sweeps.py --servers apache_msg   # 10/25/50 rps
-python run_sweeps.py --servers apache_dsp   # 10/25/50/75/100 rps
-python run_sweeps.py --servers node_dsp     # 200/400/800/1200/1600 rps
-python run_sweeps.py --servers python_dsp   # 10/25/50/75 rps
-python run_sweeps.py --servers java_dsp     # 25/50/100/200/400/600 rps
-python run_sweeps.py --servers go_sqlite    # 10/25/50/75/100/200/400/600 rps
-python run_sweeps.py --servers node_dsp_mc  # 200/400/800/1600/2400 rps
-python run_sweeps.py --servers python_dsp_mc # 25/50/100/150/200/250/300 rps
-python run_sweeps.py --servers java_dsp_mc  # 100/200/400/600/800 rps
-python run_sweeps.py --servers go_sqlite_mc # 50/100/200/400/800 rps
+python analysis/orchestration/run_sweeps.py --servers node_dsp
+python analysis/orchestration/run_sweeps.py --servers go_sqlite
+python analysis/orchestration/run_sweeps.py --servers java_dsp
+python analysis/orchestration/run_sweeps.py --servers node_dsp_mc
+python analysis/orchestration/run_sweeps.py --servers python_dsp_mc
+python analysis/orchestration/run_sweeps.py --servers java_dsp_mc
+python analysis/orchestration/run_sweeps.py --servers go_sqlite_mc
 ```
 
 To run everything unattended (~3–4 hours total):
 ```bash
-python run_sweeps.py
+python analysis/orchestration/run_sweeps.py
 ```
 
 Each trace CSV contains one row per request:
@@ -350,11 +316,11 @@ arrival_unix_ns, service_ms, queue_ms, response_ms, status_code
 ### Step 3 — Run DES on all traces
 
 ```bash
-python run_des_all.py                        # all servers
-python run_des_all.py --servers go python_dsp  # specific servers
+python analysis/orchestration/run_des_all.py
+python analysis/orchestration/run_des_all.py --servers go python_dsp
 ```
 
-For each trace CSV in `experiments/<folder>/`, this runs all three DES modes and
+For each trace CSV in `data/experiments/<folder>/`, this runs all three DES modes and
 writes four files back to the same folder:
 
 ```
@@ -372,8 +338,8 @@ sim_arrival_s, sim_response_ms, sim_queue_ms, sim_status
 ### Step 4 — Generate CDF plots
 
 ```bash
-python plot_all_cdfs.py              # all servers -> experiments/*/cdf.png
-python plot_all_cdfs.py go_1c        # single folder
+python analysis/reporting/plot_all_cdfs.py
+python analysis/reporting/plot_all_cdfs.py go_1c
 ```
 
 Each `cdf.png` has one panel per rate point. Each panel shows:
@@ -386,22 +352,22 @@ Each `cdf.png` has one panel per rate point. Each panel shows:
 ### Step 5 — Regenerate per-server READMEs
 
 ```bash
-python write_server_readmes.py
+python analysis/reporting/write_server_readmes.py
 ```
 
-Reads each `*_summary.csv` and overwrites `experiments/*/README.md` with a
+Reads each `*_summary.csv` and overwrites `data/experiments/*/README.md` with a
 formatted results table and interpretation notes.
 
 ### Step 6 — ML baseline comparison (Go server)
 
 ```bash
-python ml_baseline.py
+python analysis/des/ml_baseline.py
 ```
 
 Fits a polynomial regression model to predict `response_p99` from arrival rate
 using leave-one-out cross-validation (LOOCV — train on all rate points except
 one, predict the held-out point, repeat). Compares prediction error against DES
-replay. Requires `experiments/go_1c/` data.
+replay. Requires `data/experiments/go_1c/` data.
 
 ---
 
@@ -409,21 +375,21 @@ replay. Requires `experiments/go_1c/` data.
 
 ```bash
 # M/G/1 (single-worker server)
-python "logs and des/single_server_des.py" \
-  --input  experiments/go_1c/go_100rps.csv \
+python analysis/des/single_server_des.py \
+  --input  data/experiments/go_1c/go_100rps.csv \
   --output des_out.csv \
   --mode   replay
 
 # M/G/c (multi-worker server, e.g. 3 workers)
-python "logs and des/multi_server_des.py" \
-  --input   experiments/python_dsp_3c/python_dsp_mc_100rps.csv \
+python analysis/des/multi_server_des.py \
+  --input   data/experiments/python_dsp_3c/python_dsp_mc_100rps.csv \
   --output  des_out.csv \
   --mode    replay \
   --workers 3
 
 # Parametric mode with a different distribution family
-python "logs and des/single_server_des.py" \
-  --input experiments/node_dsp_1c/node_dsp_200rps.csv \
+python analysis/des/single_server_des.py \
+  --input data/experiments/node_dsp_1c/node_dsp_200rps.csv \
   --output des_out.csv \
   --mode parametric --dist gamma
 ```
@@ -436,7 +402,7 @@ python "logs and des/single_server_des.py" \
 
 ### Reading the summary CSV
 
-After Step 3, open `experiments/<folder>/<tag>_summary.csv`. Each row is one
+After Step 3, open `data/experiments/<folder>/<tag>_summary.csv`. Each row is one
 rate point. The most important columns:
 
 | Column | What it measures | Healthy range |
@@ -569,7 +535,7 @@ Law fails, measurement timestamps are unreliable.
    still serialises writes. Node.js cluster scales at 2.3x because OS connection
    dispatch between cluster processes adds latency not present in the 1-process version.
 
-Full analysis with per-rate tables: [EXPERIMENTS.md](EXPERIMENTS.md)
+Full analysis with per-rate tables: [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md)
 
 ---
 

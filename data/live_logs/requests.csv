@@ -1,0 +1,1 @@
+id,trace_id,arrival_unix_ns,service_start_unix_ns,service_end_unix_ns,response_end_unix_ns,queue_ms,service_ms,response_ms,status_code,bytes_written
