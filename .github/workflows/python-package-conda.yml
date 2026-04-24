@@ -35,5 +35,5 @@ jobs:
     - name: Verify imports
       run: |
         python -c "import pandas, matplotlib"
-        python -c "import poisson_load_generator"
-        python -c "import apache_load"
+        python -c "import analysis.load.poisson_load_generator"
+        python -c "import analysis.load.apache_load"

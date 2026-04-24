@@ -132,6 +132,64 @@ degradation earlier due to contention or service time growth.
 
 ---
 
+## Term Progress Summary
+
+This term converted the project from a basic Docker capacity-planning prototype
+into a reproducible experimental research platform. The original milestone was
+to validate a simple queueing/DES model against one or two containerised
+services; the delivered system now covers 11 server configurations across Go,
+Apache/PHP, Node.js, Python/Gunicorn, Java, and Go SQLite, with automated load
+sweeps, trace collection, DES replay, generated CDF plots, per-server reports,
+and cross-server result tables.
+
+The main technical achievement is that the project now explains not only when
+M/G/1 and M/G/c models work, but also why they fail. The baseline DES was
+implemented for both single-worker and multi-worker queues, then validated
+against real traces using replay, bootstrap, and parametric service-time modes.
+This made it possible to separate three causes of prediction error: queueing
+model mismatch, service-time distribution mismatch, and measurement/runtime
+artefacts. The best cases, such as Go lognormal and Python 3-core, achieve low
+KS distance, showing that the DES machinery is sound when the assumptions hold.
+
+A new result emerged beyond the original plan: several CPU-bound servers show
+load-dependent service time. Mean service time increases with utilisation,
+violating the constant-service-time assumption used by standard M/G/c models.
+To quantify this, a hyperbolic service-time inflation model was fitted per
+server and a load-dependent DES was implemented. Across the stable CPU-bound
+measurement points, the load-dependent model improves the response-time CDF fit
+relative to the standard M/G/c baseline. This turns an observed discrepancy into
+a concrete thesis contribution: OS/runtime scheduling contention can make
+service time itself a function of load.
+
+The work also identified two structural cases that require future model
+extensions rather than parameter tuning. Go SQLite behaves like a tandem queue:
+an application queue feeding an internal SQLite/WAL lock queue. Node.js cluster
+does not behave like a shared M/G/3 queue; it is closer to three independent
+M/G/1 queues with load balancing/Bernoulli splitting. These findings define the
+next modelling direction more sharply than the original milestone plan.
+
+### Progress Against Milestones
+
+| Milestone | Planned outcome | Current progress |
+|---|---|---|
+| Experimental platform | Docker services, repeatable load generation, basic monitoring | **Exceeded.** Platform now includes 11 server configs, Poisson load generators, server-side timing logs, Docker Compose CPU pinning, generated experiment READMEs, and a modular repo layout. |
+| Single-server DES | Validate M/G/1 against measured traces | **Complete.** Trace-driven M/G/1 DES supports replay, bootstrap, and parametric modes; KS distance and operational laws are used for validation. |
+| Multi-worker DES | Extend to M/G/c and compare multicore scaling | **Complete.** Heap-based M/G/c simulator validates Node.js, Python, Java, and Go SQLite 3-core variants; scaling differences are measured and explained. |
+| ML baseline | Compare queueing/DES against a simple data-driven predictor | **Partially complete.** Polynomial LOOCV baseline exists for Go response p99; full MLASP pipeline is still open. |
+| Load-dependent service model | Not originally a formal milestone | **New contribution.** Fitted `E[S] = S0 / (1 - beta*rho0)` style models and implemented load-dependent DES, explaining CPU-bound service-time inflation. |
+| Structural model extensions | Queueing networks and richer architectures | **Defined, not implemented.** Go SQLite suggests a two-stage tandem queue; Node.js cluster suggests split M/G/1 queues rather than shared M/G/3. |
+| Thesis/report consolidation | Turn experiments into reusable artefacts and thesis material | **In progress.** Results, CDF overlays, fit plots, per-server summaries, and the modular workspace are ready; formal thesis chapters and teaching worksheets remain to be written. |
+
+Overall, the project is ahead of the original DES validation milestones and has
+produced a clearer research contribution than expected: standard M/G/c works
+only when service time is independent of load, and several real containerised
+runtimes violate that assumption through scheduler, runtime, or database-lock
+contention. The remaining work is to turn these findings into formal models for
+the two non-standard architectures and to integrate them into the thesis
+narrative.
+
+---
+
 ## Progress Against Thesis A Plan
 
 Thesis A (submitted November 2025) laid out six work strands for Thesis B and C.
