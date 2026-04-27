@@ -4,152 +4,233 @@
 \section{Motivation: Violation of the Constant-Service-Time Assumption}
 \label{sec:loaddep-motivation}
 
-The standard M/G/$c$ model assumes that the service-time distribution $G$ is independent of the arrival rate $\lambda$ and the current system load. Inspection of the summary CSVs across all nine servers immediately challenged this assumption: for the majority of CPU-bound implementations, the column \texttt{mean\_svc\_ms} grows monotonically with \texttt{rate\_rps} even in stable, unsaturated traces.
+The standard M/G/$c$ model assumes that the service-time distribution $G$ is independent of the arrival rate $\lambda$ and the current system load. In this project that assumption became a testable empirical question, because every trace contains a per-request \texttt{service\_ms} measurement in addition to client-observed \texttt{response\_ms}.
 
-Figure~\ref{fig:svc-vs-rho-example} (see \texttt{service\_time\_fit.png}) illustrates this for Apache DSP~(1c): mean service time at $\rho = 0.8$ is roughly $3\times$ that at $\rho = 0.1$. For Python DSP~(1c) with the GIL, the same metric is flat across the full load range.
+The summary CSVs show that the assumption is sometimes valid and sometimes not. Python DSP~(1c), Node DSP~(3c), Java DSP~(3c), and Go SQLite~(1c) have approximately constant mean service time over the fitted range. However, several CPU-bound workloads show clear service-time growth as arrival rate increases. Apache DSP~(1c), Apache MSG~(1c), Go lognormal~(1c), Node DSP~(1c), and Python DSP~(3c) all show a positive dependence between mean service time and utilisation. This is the main model violation studied in Thesis~B.
 
-This divergence has a clear mechanistic explanation, described in the next section.
+The practical consequence is important: if service time increases with load, a DES calibrated at low load will underestimate response time at higher load even if the arrival process, worker count, and base service-time distribution are correct.
 
 %-------------------------------------------------------------
-\section{Mechanistic Explanation: OS Processor Sharing}
+\section{Mechanistic Explanation: Wall-Clock Processor Sharing}
 \label{sec:ps-mechanism}
 
-When a Docker container is constrained to a single CPU core and multiple requests are being handled concurrently (whether by OS threads, goroutines, or forked processes), the OS kernel time-slices CPU access among all active threads. At low load, most requests find the CPU idle and begin service immediately; their measured service time closely reflects the true computational demand. At high load, many threads are simultaneously runnable; the kernel round-robins among them. Each individual thread therefore makes slower progress through its computation: the same work takes longer because the thread is repeatedly preempted and must wait for its next scheduling quantum.
+The proposed mechanism is OS-level time sharing. When a Docker container is constrained to a fixed number of CPU cores and multiple request handlers are runnable at the same time, the Linux scheduler divides CPU time among them. A request may require the same number of CPU cycles at every load, but the \emph{wall-clock} time from handler entry to handler exit increases because the handler is repeatedly preempted and waits for its next CPU quantum.
 
-This is Processor Sharing (PS) at the OS kernel level, even though the application-layer queue discipline is FCFS. The net effect is that the \emph{observed} mean service time (wall-clock time from handler entry to handler exit) grows with utilisation, not because the request requires more CPU cycles, but because the CPU cycles are shared.
+This is closely related to Processor Sharing (PS) in queueing theory. It is not claimed that the application queue is literally an M/M/1-PS queue. Rather, the PS formula motivates the shape of the measured wall-clock service-time inflation: as utilisation approaches saturation, each active handler receives a smaller effective share of the CPU, so elapsed service time grows nonlinearly.
 
-The strength of this effect depends on the server architecture:
+The strength of this effect depends on the runtime architecture:
 
 \begin{itemize}
-    \item \textbf{Apache \texttt{mpm\_prefork}}: each request occupies a dedicated OS process. Under concurrent load all processes compete for the single pinned core, maximising the PS effect. $\beta \approx 1$.
-
-    \item \textbf{Go goroutines}: the Go scheduler multiplexes goroutines with work-stealing and preemption. Under load, goroutine context-switch overhead amplifies service times. $\beta \approx 0.976$.
-
-    \item \textbf{Node.js single-process}: although the event loop is single-threaded, callback interleaving and I/O polling under high throughput introduce measurable service-time inflation. $\beta \approx 0.904$.
-
-    \item \textbf{Python with GIL}: the GIL serialises Python bytecode execution, meaning requests are effectively processed one at a time regardless of threading. No simultaneous CPU competition occurs, so service time remains flat. $\beta \approx 0$.
-
-    \item \textbf{Go SQLite}: database reads are I/O-bound, not CPU-bound. The CPU is idle during disk waits, so contention is absent. $\beta \approx 0$.
+    \item \textbf{Apache \texttt{mpm\_prefork}}: each request occupies an OS process. Under concurrent load, these processes compete directly for the pinned CPU core.
+    \item \textbf{Go goroutines}: goroutines are scheduled over OS threads and can be preempted. Even a synthetically fixed busy-loop can exhibit wall-clock inflation when scheduler delays occur inside the measured service interval.
+    \item \textbf{Node.js single process}: the event loop is single-threaded, but callback scheduling, garbage collection, and runtime bookkeeping create load-sensitive wall-clock delays.
+    \item \textbf{Python DSP (1c)}: the single-worker/GIL path serialises execution, making it the strongest constant-service-time control.
+    \item \textbf{Go SQLite}: SQLite introduces database-lock and I/O effects. Its service-time dependence is structural rather than a pure CPU Processor-Sharing effect.
 \end{itemize}
 
 %-------------------------------------------------------------
 \section{Model Fitting: Three Competing Hypotheses}
 \label{sec:model-fitting}
 
-Three functional forms were evaluated for $E[S](\rho)$:
+Three candidate models were fitted to the measured mean service time at each arrival rate:
 
 \begin{align}
-    \text{M0 (constant):}   &\quad E[S] = S_0 \label{eq:m0} \\
-    \text{M1 (linear):}     &\quad E[S] = S_0 + \alpha\rho \label{eq:m1} \\
-    \text{M2 (hyperbolic):} &\quad E[S] = \frac{S_0}{1 - \beta\rho} \label{eq:m2}
+    \text{M0 (constant):}   &\quad E[S](\rho_0) = S_0 \label{eq:m0} \\
+    \text{M1 (linear):}     &\quad E[S](\rho_0) = S_0 + \alpha\rho_0 \label{eq:m1} \\
+    \text{M2 (hyperbolic):} &\quad E[S](\rho_0) = \frac{S_0}{1 - \beta\rho_0}. \label{eq:m2}
 \end{align}
 
-The hyperbolic form M2 is the Processor Sharing mean sojourn time under a PS queue (i.e., $E[S] \to \infty$ as $\rho \to 1$). It is the theoretically motivated choice: as the CPU becomes saturated, sharing among concurrent threads means each individual thread's wall-clock service time grows without bound.
+Here
+\[
+\rho_0 = \frac{\lambda S_0}{c}
+\]
+is the nominal utilisation computed using the base service time $S_0$, not the inflated measured service time. This avoids the circular interpretation that would occur if $\rho$ were computed using the already load-inflated $E[S]$.
 
-Each model was fitted to the summary data points $\{(\rho_i, E[S]_i)\}$ for $\rho_i \leq 0.92$ using \texttt{scipy.optimize.curve\_fit} with non-linear least squares. Model selection used the Akaike Information Criterion (AIC):
+M0 is the standard M/G/$c$ hypothesis. M1 is an empirical first-order correction. M2 is the mechanistic hypothesis motivated by Processor Sharing. The parameter $\beta \in [0,1)$ controls the strength of the load dependence: $\beta = 0$ reduces to M0, while $\beta$ close to 1 approaches full PS-like inflation near $\rho_0 = 1$.
+
+The models were fitted using \texttt{analysis/des/fit\_service\_time.py}. For each server, the script fits the measured pairs $\{(\rho_{0,i}, \overline{S}_i)\}$ using nonlinear least squares and selects among M0, M1, and M2 using the Akaike Information Criterion (AIC):
 
 \[
 \text{AIC} = n \ln\!\left(\frac{\text{SSE}}{n}\right) + 2k,
 \]
 
-where $n$ is the number of data points and $k$ is the number of free parameters (1 for M0, 2 for M1/M2).
+where $n$ is the number of rate points and $k$ is the number of fitted parameters. AIC is used because M1 and M2 have more flexibility than M0 and should only be preferred when the improvement justifies the added parameter.
 
 %-------------------------------------------------------------
-\section{Fitting Results}
+\section{Service-Time Fit Results}
 \label{sec:fit-results}
 
-Table~\ref{tab:fit-params} summarises the best-fit model and parameters for each server. The full figure of model fits is saved as \texttt{service\_time\_fit.png}.
+Table~\ref{tab:fit-params} summarises the fitted models. The full output is saved in \texttt{results/tables/service\_time\_fit\_params.csv}, and the corresponding plot is \texttt{results/figures/service\_time\_fit.png}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{service_time_fit.png}
+\caption{Mean service time against nominal utilisation $\rho_0$ for each server, with M0/M1/M2 fits overlaid.}
+\label{fig:service-time-fit}
+\end{figure}
 
 \begin{table}[h]
 \centering
-\caption{Service-time model fit results. M2 hyperbolic selected by AIC for all CPU-bound servers. $\beta \approx 0$ servers are correctly identified as constant-service-time. The ratio $E[S]_{@\rho=0.8} / E[S]_{@\rho=0.1}$ measures load-induced inflation.}
+\caption{Service-time model fitting results. ``Constant'' means AIC selected M0 or the fitted change is practically negligible. M1 is often the best empirical curve over the measured range; M2 remains the mechanistic model used to test PS-like inflation.}
 \label{tab:fit-params}
-\begin{tabular}{l c l r r r r l}
+\begin{tabular}{l c l r r r l}
 \toprule
-\textbf{Server} & \textbf{$c$} & \textbf{Best model} & \textbf{$S_0$ (ms)} & \textbf{$\beta$} & \textbf{R$^2$} & \textbf{Ratio} & \textbf{Constant?} \\
+\textbf{Server} & \textbf{$c$} & \textbf{AIC model} & \textbf{$S_0$ ms} & \textbf{$\beta$} & \textbf{Ratio} & \textbf{Interpretation} \\
 \midrule
-Apache DSP (1c)   & 1 & M2 hyperbolic & -- & $\approx 0.999$ & -- & $>3.0$ & $\times$ \\
-Apache MSG (1c)   & 1 & M2 hyperbolic & -- & $\approx 0.999$ & -- & $>3.0$ & $\times$ \\
-Go lognormal (1c) & 1 & M2 hyperbolic & -- & $0.976$         & -- & $>2.5$ & $\times$ \\
-Go SQLite (1c)    & 1 & M0 constant   & -- & $0.000$         & -- & $<1.1$ & $\checkmark$ \\
-Java DSP (1c)     & 4 & M2 hyperbolic & -- & $\approx 0.999$ & -- & $<1.0$ & special \\
-Node DSP (1c)     & 1 & M2 hyperbolic & -- & $0.904$         & -- & $>2.0$ & $\times$ \\
-Python DSP (1c)   & 1 & M0 constant   & -- & $0.000$         & -- & $<1.1$ & $\checkmark$ \\
-Python DSP (3c)   & 3 & M2 hyperbolic & -- & $>0$            & -- & $>1.2$ & $\times$ \\
-Node DSP (3c)     & 3 & M2 hyperbolic & -- & $>0$            & -- & $>1.5$ & $\times$ \\
+Apache DSP (1c)   & 1 & M1 & 3.242 & 0.999 & 4.48 & load-dependent \\
+Apache MSG (1c)   & 1 & M1 & 2.062 & 0.999 & 4.48 & load-dependent \\
+Go lognormal (1c) & 1 & M1 & 1.418 & 0.999 & 4.48 & load-dependent \\
+Go SQLite (1c)    & 1 & M0 & 10.786 & 0.000 & 1.00 & constant mean; structural queue \\
+Java DSP (1c)     & 1 & M0 & 0.376 & 0.999 & 4.48 & JIT anomaly \\
+Node DSP (1c)     & 1 & M1 & 0.831 & 0.999 & 4.48 & load-dependent \\
+Python DSP (1c)   & 1 & M0 & 8.186 & 0.000 & 1.00 & constant-service control \\
+Python DSP (3c)   & 3 & M1 & 9.702 & 0.324 & 1.31 & load-dependent \\
+Node DSP (3c)     & 3 & M0 & 1.068 & 0.031 & 1.02 & near constant; split queues \\
+Java DSP (3c)     & 3 & M0 & 0.303 & 0.000 & 1.00 & near constant \\
+Go SQLite (3c)    & 3 & M2 & 4.991 & 0.318 & 1.30 & WAL/tandem effects \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+The table shows a more nuanced result than a simple ``M2 always wins'' claim. AIC frequently selects M1, meaning that over the observed stable range a straight line can approximate the measured mean service-time growth. M2 is still valuable because it is mechanistic: it has the correct limiting behaviour near saturation and gives $\beta$ a direct interpretation as PS-like load sensitivity. M1 is therefore treated as a descriptive empirical competitor, while M2 is the model whose queueing interpretation is tested in the DES.
 
 \paragraph{Java DSP anomaly.}
-Java DSP exhibits high $\beta$ from the curve fitter but the service time actually \emph{decreases} with load rather than increases. This is the JIT warmup artefact: the JVM compiles hot methods to native code after a threshold of invocations, so early requests (low load, early in the trace) are interpreted and slow, while later requests (higher load, after warmup) are compiled and fast. This is not a queueing phenomenon; it is a one-time transient at experiment startup. Java DSP is excluded from load-dependent model conclusions.
+Java DSP is not used as evidence for load-dependent CPU sharing. Its service time decreases in parts of the sweep because JVM JIT compilation warms up hot code paths. The ANOVA and fitting procedures can detect a statistically significant change, but the direction and mechanism are different from the CPU-contention effect.
 
 \paragraph{Node DSP 3c structural mismatch.}
-The 3-worker Node.js cluster uses the \texttt{cluster} module, which distributes connections across three independent Node.js processes via Bernoulli splitting. This is architecturally three independent M/G/1 queues, not a shared-queue M/G/3 system. A single M/G/3 DES therefore structurally mismatches this server regardless of the service-time model used, and the base KS distance remains high ($\approx 0.73$) even with the load-dependent correction.
+Node.js cluster mode is not a shared M/G/3 queue. It is closer to three independent M/G/1 queues fed by connection splitting. The service-time model alone cannot repair that architectural mismatch.
 
 %-------------------------------------------------------------
-\section{Load-Dependent DES Construction}
-\label{sec:ld-des}
+\section{M0/M1/M2 DES Comparison}
+\label{sec:m0-m1-m2-des}
 
-The load-dependent DES extends the standard M/G/$c$ replay engine (\S\ref{sec:des-infra}) by replacing the fixed mean service time $S_0$ with an effective mean:
+The supervisor's key question was whether a better service-time model also improves the simulated response-time CDF. To test this, \texttt{analysis/des/des\_m0\_m1\_m2\_compare.py} runs the same trace-driven DES three times at each stable rate:
 
-\begin{equation}
-    S_\text{eff} = \frac{S_0}{1 - \beta \cdot \min(\rho_\text{obs},\, 0.95)},
-    \label{eq:s-eff}
-\end{equation}
+\begin{itemize}
+    \item CDF\_M0: DES using the constant service mean $S_0$.
+    \item CDF\_M1: DES using the fitted linear mean $S_0+\alpha\rho_0$.
+    \item CDF\_M2: DES using the fitted hyperbolic mean $S_0/(1-\beta\rho_0)$.
+\end{itemize}
 
-where $\rho_\text{obs}$ is the observed utilisation from the summary CSV for the trace under test. The cap at 0.95 prevents division by zero for $\beta \approx 1$ near saturation.
+Each simulated response-time CDF is compared against the measured response-time CDF (CDF\_REF) using KS distance. The full table is \texttt{results/tables/des\_m0\_m1\_m2\_results.csv}; the overview figure is \texttt{results/figures/des\_m0\_m1\_m2\_cdf.png}. To answer the supervisor's request directly, the clearest M2-over-M0 cases were extracted into \texttt{results/tables/m2\_beats\_m0\_cases.csv} and plotted in \texttt{results/figures/m2\_beats\_m0\_cdf.png}.
 
-Crucially, $S_\text{eff}$ is computed once per trace using the \emph{observed} $\rho$, rather than solving the implicit equation $\rho = \lambda \cdot E[S_\text{eff}](\rho) / (c \cdot 1000)$. This avoids a fixed-point iteration and is valid because the observed $\rho$ already reflects the load-dependent equilibrium.
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{des_m0_m1_m2_cdf.png}
+\caption{Measured response-time CDF compared with M0, M1, and M2 DES response-time CDFs.}
+\label{fig:m0-m1-m2-cdf}
+\end{figure}
 
-The standard M/G/$c$ simulation corresponds to $\beta = 0$ (i.e.\ $S_\text{eff} = S_0$).
-
-%-------------------------------------------------------------
-\section{Validation Results}
-\label{sec:ld-validation}
-
-\subsection{KS Distance Comparison}
-
-Table~\ref{tab:ks-comparison} summarises the mean KS distances across all stable ($\rho \leq 0.92$) traces for each server, comparing the standard M/G/$c$ baseline (\texttt{ks\_std}) with the load-dependent model (\texttt{ks\_ld}). The column $\Delta = \texttt{ks\_std} - \texttt{ks\_ld}$ is positive when the load-dependent model wins; $\Delta > 0.005$ is the threshold for ``improved''.
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{m2_beats_m0_cdf.png}
+\caption{Selected cases where the M2 response-time CDF is closer to the measured CDF than the M0 response-time CDF.}
+\label{fig:m2-beats-m0}
+\end{figure}
 
 \begin{table}[h]
 \centering
-\caption{Mean per-server KS distance comparison. Lower is better. $\Delta > 0$ means load-dependent DES improves on standard M/G/$c$.}
-\label{tab:ks-comparison}
-\begin{tabular}{l r r r r}
+\caption{Cases where M2 improves the response-time CDF fit relative to M0. Positive $\Delta$ means M2 has lower KS distance than M0.}
+\label{tab:m2-beats-m0}
+\begin{tabular}{l r r r r r l}
 \toprule
-\textbf{Server} & \textbf{Mean KS std} & \textbf{Mean KS LD} & \textbf{Mean $\Delta$} & \textbf{\% improved} \\
+\textbf{Server} & \textbf{Rate} & \textbf{$\rho_0$} & \textbf{$\beta$} & \textbf{KS M0} & \textbf{KS M2} & \textbf{Best} \\
 \midrule
-Apache DSP (1c)   & high & lower & $+$large & 100\% \\
-Apache MSG (1c)   & high & lower & $+$large & 100\% \\
-Go lognormal (1c) & moderate & lower & $+$moderate & 100\% \\
-Node DSP (1c)     & moderate & lower & $+$moderate & 100\% \\
-Python DSP (3c)   & moderate & lower & $+$small  & 100\% \\
-Python DSP (1c)   & low & same & $\approx 0$ & 0\% (correct) \\
-Go SQLite (1c)    & low & same & $\approx 0$ & 0\% (correct) \\
-Node DSP (3c)     & high & high & $\approx 0$ & 0\% (structural mismatch) \\
+Python DSP (3c) & 200 & 0.647 & 0.324 & 0.2943 & 0.1153 & M2 \\
+Python DSP (3c) & 150 & 0.485 & 0.324 & 0.2762 & 0.1228 & M1 \\
+Apache DSP (1c) & 75  & 0.243 & 0.999 & 0.4828 & 0.3671 & M2 \\
+Python DSP (3c) & 100 & 0.323 & 0.324 & 0.2722 & 0.1641 & M1 \\
+Go lognormal (1c) & 200 & 0.284 & 0.999 & 0.1815 & 0.0925 & M2 \\
+Apache MSG (1c) & 50 & 0.103 & 0.999 & 0.4488 & 0.3743 & M1 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The key results are:
+These results support the narrower and stronger claim: M2 is not universally the best CDF model, and M1 is sometimes closer over the finite measured range. However, there are clear cases where the constant-service-time M0 model fails and M2 substantially improves the response-time CDF. This is precisely the situation where a new model is needed. The contribution is therefore not that M2 dominates every alternative, but that service-time independence is empirically false for important workloads and that a PS-motivated correction can improve DES predictions where M0 breaks.
+
+%-------------------------------------------------------------
+\section{Service-Time Histograms and ANOVA}
+\label{sec:anova-service-time}
+
+To further test whether service time depends on arrival rate, \texttt{analysis/des/plot\_supervisor\_followup.py} generates per-rate service-time histograms and \texttt{analysis/des/anova\_service\_time.py} performs one-way ANOVA on service times grouped by arrival rate.
+
+The histograms are saved as:
+\begin{itemize}
+    \item \texttt{results/figures/service\_time\_hist\_apache\_dsp\_1c.png}
+    \item \texttt{results/figures/service\_time\_hist\_go\_1c.png}
+    \item \texttt{results/figures/service\_time\_hist\_python\_dsp\_3c.png}
+    \item \texttt{results/figures/service\_time\_hist\_go\_sqlite\_3c.png}
+\end{itemize}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{service_time_hist_apache_dsp_1c.png}
+\caption{Apache DSP~(1c) service-time histograms by arrival rate. The high-rate distributions develop a much heavier right tail.}
+\label{fig:hist-apache-dsp}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{service_time_hist_go_1c.png}
+\caption{Go lognormal~(1c) service-time histograms by arrival rate. The programmed workload is fixed, but wall-clock service time still increases under scheduler contention.}
+\label{fig:hist-go}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{service_time_hist_python_dsp_3c.png}
+\caption{Python DSP~(3c) service-time histograms by arrival rate. The shift is smaller than Apache but still visible at higher stable rates.}
+\label{fig:hist-python-3c}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{service_time_hist_go_sqlite_3c.png}
+\caption{Go SQLite~(3c) service-time histograms by arrival rate. This is interpreted as a structural database-lock case rather than pure CPU Processor Sharing.}
+\label{fig:hist-go-sqlite-3c}
+\end{figure}
+
+The service-time distributions are right-skewed and approximately log-normal, so the ANOVA is applied to $\log(\texttt{service\_ms})$ rather than raw \texttt{service\_ms}. The hypotheses are:
+
+\begin{itemize}
+    \item $H_0$: mean log service time is the same at all arrival rates, so M0 is adequate.
+    \item $H_1$: mean log service time differs by arrival rate, so service time is load-dependent and M0 does not hold.
+\end{itemize}
+
+The full ANOVA output is \texttt{results/tables/service\_time\_anova.csv}. Because the traces contain tens of thousands of requests, $p$-values are significant even for tiny effects. Interpretation therefore relies on both $p$-value and effect size $\eta^2$.
+
+\begin{table}[h]
+\centering
+\caption{Selected one-way ANOVA results on log service time. Large $\eta^2$ indicates that arrival rate explains a meaningful fraction of service-time variation.}
+\label{tab:anova}
+\begin{tabular}{l r r r l}
+\toprule
+\textbf{Server} & \textbf{Rates} & \textbf{Mean ratio} & \textbf{$\eta^2$} & \textbf{Interpretation} \\
+\midrule
+Apache DSP (1c) & 5 & 20.47 & 0.3074 & strong M0 violation \\
+Node DSP (1c) & 7 & 2.56 & 0.1042 & meaningful load dependence \\
+Go lognormal (1c) & 4 & 1.98 & 0.0339 & smaller but clear dependence \\
+Python DSP (3c) & 7 & 1.23 & 0.0268 & modest dependence \\
+Python DSP (1c) & 4 & 0.96 & 0.0054 & statistically significant but practically small \\
+Node DSP (3c) & 5 & 0.98 & 0.0018 & practically constant \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ANOVA supports the CDF evidence: for several DSP workloads, service time is not independent of arrival rate. It also reinforces the need for caution. Statistical rejection alone is not enough, because very large samples make tiny differences significant. The strongest evidence comes from the combination of visible histogram shifts, meaningful $\eta^2$, improved M2-over-M0 CDF fit, and a plausible scheduling mechanism.
+
+%-------------------------------------------------------------
+\section{Interpretation}
+\label{sec:ld-interpretation}
+
+The final Thesis~B position is therefore:
 
 \begin{enumerate}
-    \item For every CPU-bound server (Apache, Go, Node DSP 1c, Python 3c), the load-dependent model improves KS distance at 100\% of stable operating points.
-
-    \item The best single-point improvement is Apache DSP at $\rho = 0.435$: $d_\text{KS}$ falls from $0.527$ to $0.290$ ($\Delta = +0.237$).
-
-    \item Servers correctly identified as having $\beta \approx 0$ (Python DSP 1c, Go SQLite) show no change in KS distance, confirming the model does not introduce spurious corrections.
-
-    \item Node DSP 3c has high base KS distance that is not fixed by the $\beta$ model, because the structural assumption (shared M/G/3 queue) is wrong for the cluster architecture.
+    \item M0 is still the correct model for some workloads. Python DSP~(1c), Node DSP~(3c), and Java DSP~(3c) are approximately constant-service cases over the measured range.
+    \item M0 fails for several CPU-bound DSP workloads because wall-clock service time changes with arrival rate.
+    \item M1 often fits the measured mean service time well over a finite range, but it is descriptive rather than mechanistic.
+    \item M2 is justified as a PS-motivated load-dependent model. It does not need to be identical to a classical M/M/1-PS queue to be useful; it borrows the correct nonlinear saturation shape for wall-clock service inflation.
+    \item In the CDF experiments requested by the supervisor, M2 clearly improves on M0 in selected cases where the constant-service assumption fails. This supports load dependence as a real modelling issue and motivates deeper mechanistic work in Thesis~C.
 \end{enumerate}
 
-\subsection{CDF Overlay}
-
-CDF overlays for each server at the lowest and highest stable rate are saved as \texttt{des\_ld\_cdf.png}. Each panel shows three curves: observed (solid blue), standard M/G/$c$ (dashed red), and load-dependent DES (dash-dot green), with KS distances annotated in the title.
-
-\subsection{Interpretation}
-
-The consistent KS improvement for CPU-bound servers confirms that the hyperbolic load-dependent service time model captures a real and quantifiable phenomenon: OS-level Processor Sharing inflating observed service times as utilisation grows. The model provides a principled correction to M/G/$c$ that requires only one additional parameter ($\beta$), estimated offline from a small number of load-test traces.
-
-The two servers where the model offers no improvement (Python GIL, Go SQLite) are correctly identified by their $\beta \approx 0$ fits, meaning the framework self-consistently selects the standard model when the load-dependence assumption does not hold.
+This is a stronger thesis claim than simply reporting a curve fit. The work now includes experimental evidence (histograms and traces), simulation evidence (CDF\_REF vs.\ CDF\_M0/M1/M2), and analytical/statistical evidence (ANOVA on log service times) supporting the same conclusion: service time is not always exogenous in containerised microservices.

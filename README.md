@@ -1,6 +1,6 @@
 # Docker Container Capacity Modelling — Research Platform
 
-COMP9334 thesis project (UNSW). The core question is: given a measured trace of
+The core question is: given a measured trace of
 real requests to a containerised server, can we accurately predict what the
 response-time distribution will look like at a higher load — without running the
 server at that load?
@@ -233,12 +233,13 @@ KS distance, showing that the DES machinery is sound when the assumptions hold.
 A new result emerged beyond the original plan: several CPU-bound servers show
 load-dependent service time. Mean service time increases with utilisation,
 violating the constant-service-time assumption used by standard M/G/c models.
-To quantify this, a hyperbolic service-time inflation model was fitted per
-server and a load-dependent DES was implemented. Across the stable CPU-bound
-measurement points, the load-dependent model improves the response-time CDF fit
-relative to the standard M/G/c baseline. This turns an observed discrepancy into
-a concrete thesis contribution: OS/runtime scheduling contention can make
-service time itself a function of load.
+To quantify this, M0/M1/M2 service-time models were fitted per server and the
+resulting response-time CDFs were compared in DES. The final result is nuanced:
+M2 is not best everywhere, and M1 is sometimes a strong empirical approximation,
+but M2 clearly improves over the constant-service M0 model in the workloads
+where M0 fails. This turns an observed discrepancy into a concrete thesis
+contribution: OS/runtime scheduling contention can make service time itself a
+function of load.
 
 The work also identified two structural cases that require future model
 extensions rather than parameter tuning. Go SQLite behaves like a tandem queue:
@@ -271,11 +272,12 @@ narrative.
 
 ## Plots And Analysis
 
-This repository currently contains 13 generated plots: two cross-server
-load-dependent service-time figures in `results/figures/`, and one
-observed-vs-DES CDF overlay for each of the 11 experiment folders in
-`data/experiments/`. The root README includes all of them here so the visual
-evidence and interpretation can be reviewed without hunting through folders.
+This repository contains the generated plots needed to inspect the full Thesis B
+evidence chain: cross-server service-time fits, DES CDF overlays, M0/M1/M2 model
+comparisons, supervisor follow-up plots, service-time histograms, ANOVA tables,
+and one observed-vs-DES CDF overlay for each experiment folder. The root README
+includes the main figures here so the visual evidence and interpretation can be
+reviewed without hunting through folders.
 
 ### Cross-Server Load-Dependent Service-Time Results
 
@@ -307,6 +309,75 @@ with approximately constant service time, such as Python DSP 1-core, Java DSP
 3-core, and Node DSP 3-core, show little or no change, which is the expected
 control behaviour. Go SQLite remains a structural mismatch because a single
 application queue does not model the hidden SQLite/WAL lock queue.
+
+#### M0/M1/M2 Response-CDF Comparison
+
+![Measured response CDF vs M0 M1 M2 DES CDFs](results/figures/des_m0_m1_m2_cdf.png)
+
+This figure answers the supervisor's main validation question: fitting a better
+service-time model is not enough; the simulated response-time CDF should also
+move closer to the measured CDF. Each panel compares `CDF_REF` against
+`CDF_M0`, `CDF_M1`, and `CDF_M2`. The result is deliberately not oversold:
+sometimes M1 and M2 sit close together, and sometimes M1 is best over the finite
+measured range. The important result is that M0 visibly fails in several
+workloads, so constant service time cannot be assumed universally.
+
+#### Clear Cases Where M2 Beats M0
+
+![Cases where M2 beats M0 response CDF](results/figures/m2_beats_m0_cdf.png)
+
+This follow-up plot isolates the cases Chun specifically asked for: situations
+where `CDF_M2` fits `CDF_REF` more clearly than `CDF_M0`. The strongest examples
+are Python DSP 3-core at 200 rps, Apache DSP 1-core at 75 rps, and Go lognormal
+1-core at 200 rps. These are the key thesis cases because they show why a new
+load-dependent model is needed: the standard M0 DES uses the wrong service-time
+mean and therefore places the response-time CDF in the wrong location.
+
+#### Service-Time Histograms By Arrival Rate
+
+![Apache DSP service-time histograms](results/figures/service_time_hist_apache_dsp_1c.png)
+
+Apache DSP 1-core shows the strongest M0 violation. The service-time
+distribution becomes much heavier-tailed as arrival rate increases: the 100 rps
+trace has a mean service time far above the low-rate traces, while the median
+also shifts upward. This is exactly the pattern expected when OS processes
+compete for the same pinned CPU core.
+
+![Go lognormal service-time histograms](results/figures/service_time_hist_go_1c.png)
+
+Go lognormal was intended as a controlled workload, but the histograms show that
+its measured wall-clock service time still grows with load. The likely mechanism
+is Go runtime scheduling: goroutines are preempted and rescheduled while the
+busy-loop is being measured, so wall-clock service time includes scheduler wait.
+
+![Python DSP 3-core service-time histograms](results/figures/service_time_hist_python_dsp_3c.png)
+
+Python DSP 3-core has a smaller but still visible distribution shift. This is
+why the effect size is modest rather than huge: M0 is not catastrophically wrong,
+but the response-CDF comparison shows that correcting the service mean can still
+matter at higher stable rates.
+
+![Go SQLite 3-core service-time histograms](results/figures/service_time_hist_go_sqlite_3c.png)
+
+Go SQLite 3-core is included as a structural caution case. Its behaviour is not
+best explained as pure CPU processor sharing; it points toward a tandem model
+where application workers feed an internal SQLite/WAL lock queue.
+
+#### ANOVA Confirmation
+
+The statistical follow-up is saved in
+[`results/tables/service_time_anova.csv`](results/tables/service_time_anova.csv).
+Because service times are right-skewed and approximately log-normal, ANOVA is
+applied to `log(service_ms)`. The null hypothesis is M0: service time is
+independent of arrival rate. The alternative is that service time changes with
+arrival rate.
+
+The p-values reject M0 for many servers, but the traces are large, so effect size
+matters more than p-value alone. The strongest practical effects are Apache DSP
+1-core (`eta2_log = 0.3074`), Node DSP 1-core (`0.1042`), Go lognormal 1-core
+(`0.0339`), and Python DSP 3-core (`0.0268`). Python DSP 1-core and Node DSP
+3-core have very small effect sizes, so they remain useful near-constant
+controls even when the formal p-value is significant.
 
 ### Per-Server DES CDF Plots
 
@@ -439,9 +510,9 @@ the modelling direction changed, and what remains to ask the supervisor.
 
 | File | What it contains |
 |---|---|
-| `docs/latex/thesis/research_journey.tex` | Chronological account of the project difficulties and pivots: CPU pinning, Apache routing, PHP timing reconstruction, CSV corruption, Go saturation/rejections, Java JIT warm-up, DES performance fixes, Node cluster mismatch, Go SQLite tandem-queue discovery, and the D-13/D-14 load-dependent service-time finding that motivated the beta model. |
+| `docs/latex/thesis/research_journey.tex` | Chronological account of the project difficulties and pivots: CPU pinning, Apache routing, PHP timing reconstruction, CSV corruption, Go saturation/rejections, Java JIT warm-up, DES performance fixes, Node cluster mismatch, Go SQLite tandem-queue discovery, the D-13/D-14 load-dependent service-time finding, and the D-16 supervisor follow-up that forced the M0/M1/M2 CDF and ANOVA validation. |
 | `docs/latex/thesis/methodology_b.tex` | Experimental platform and multi-server methodology: server catalogue, runtime concurrency models, Poisson load generation, trace/summary CSV schema, batch DES replay, lognormal parameterisation, KS validation, and visualiser/live-load tooling. |
-| `docs/latex/thesis/loaddep_model.tex` | Load-dependent service-time model: why constant-service-time M/G/c fails, OS-level processor-sharing explanation, M0/M1/M2 candidate fits, AIC selection, beta table, Java JIT anomaly, Node 3-core structural mismatch, load-dependent DES equation, and KS validation. |
+| `docs/latex/thesis/loaddep_model.tex` | Load-dependent service-time model: why constant-service-time M/G/c fails, OS-level processor-sharing explanation, M0/M1/M2 candidate fits, AIC selection, beta table, Java JIT anomaly, Node 3-core structural mismatch, M0/M1/M2 DES response-CDF validation, service-time histograms, and ANOVA interpretation. |
 | `docs/latex/thesis/conclusion_b.tex` | Thesis B conclusion and future work: contributions, limitations, MLASP comparison, why service-time ML was replaced by the mechanistic beta model, why ML remains useful for arrival-rate forecasting, industrial scalability, Kubernetes HPA/feedforward autoscaling relevance, and candidate Thesis C models. |
 | `docs/latex/thesis/mywork.tex` | Updated literature review positioning: MLASP comparison, high-value open gaps in capacity planning, and the corrected explanation of how the Thesis A ML-DES plan evolved into the current mechanistic beta + future arrival-forecasting approach. |
 | `docs/DIFFICULTIES.md` | Raw research/debugging log that backs the `research_journey.tex` chapter. This is the detailed source of the mishaps, fixes, and discoveries. |
@@ -734,12 +805,16 @@ replay. Requires `data/experiments/go_1c/` data.
 
 ### Step 7 - Regenerate load-dependent service-time results
 
-These commands reproduce the two cross-server result tables and figures in
+These commands reproduce the cross-server service-time fits, load-dependent DES
+results, M0/M1/M2 comparison, supervisor follow-up plots, and ANOVA table in
 `results/`:
 
 ```bash
 python analysis/des/fit_service_time.py
 python analysis/des/des_load_dependent.py
+python analysis/des/des_m0_m1_m2_compare.py
+python analysis/des/plot_supervisor_followup.py
+python analysis/des/anova_service_time.py
 ```
 
 Outputs:
@@ -747,14 +822,25 @@ Outputs:
 ```text
 results/tables/service_time_fit_params.csv
 results/tables/des_ld_results.csv
+results/tables/des_m0_m1_m2_results.csv
+results/tables/m2_beats_m0_cases.csv
+results/tables/service_time_anova.csv
 results/figures/service_time_fit.png
 results/figures/des_ld_cdf.png
+results/figures/des_m0_m1_m2_cdf.png
+results/figures/m2_beats_m0_cdf.png
+results/figures/service_time_hist_apache_dsp_1c.png
+results/figures/service_time_hist_go_1c.png
+results/figures/service_time_hist_python_dsp_3c.png
+results/figures/service_time_hist_go_sqlite_3c.png
 ```
 
 `fit_service_time.py` estimates the base service time `S0` and the
-load-dependence parameter `beta` for each server. `des_load_dependent.py` then
-compares the standard M/G/c DES against the load-dependent DES using KS distance
-on the response-time CDF.
+load-dependence parameter `beta` for each server. `des_m0_m1_m2_compare.py`
+then compares `CDF_REF`, `CDF_M0`, `CDF_M1`, and `CDF_M2` using KS distance on
+the response-time CDF. `plot_supervisor_followup.py` extracts the clearest
+M2-over-M0 cases and plots service-time histograms. `anova_service_time.py`
+tests whether `log(service_ms)` depends on arrival rate.
 
 ---
 

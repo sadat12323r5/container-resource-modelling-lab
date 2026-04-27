@@ -97,7 +97,7 @@ The distinction between OS-level Processor Sharing (the physical reality) and ap
 
 \subsection{Batch Replay DES}
 
-The core DES engine (\texttt{run\_des} in \texttt{des\_load\_dependent.py}) operates in \emph{replay mode}: it consumes the exact arrival sequence from an observed trace and produces a simulated response-time distribution by sampling service times from the fitted model.
+The core DES engine (\texttt{run\_des} in \texttt{analysis/des/des\_load\_dependent.py}) operates in \emph{replay mode}: it consumes the exact arrival sequence from an observed trace and produces a simulated response-time distribution by sampling service times from the fitted model.
 
 \begin{enumerate}
     \item For each arrival at time $t_i$, assign it to the worker $s^* = \arg\min_s \texttt{free\_at}[s]$.
@@ -108,6 +108,20 @@ The core DES engine (\texttt{run\_des} in \texttt{des\_load\_dependent.py}) oper
 \end{enumerate}
 
 This replay approach removes arrival-process modelling error: both observed and simulated sequences share the same inter-arrival times, so any difference in the CDF is attributable solely to the service-time model. Five independent runs (differing only in the random seed for service-time sampling) are merged to reduce sampling variance.
+
+\subsection{M0/M1/M2 Service-Time Model Comparison}
+
+After the initial load-dependent DES results, the supervisor requested a more explicit comparison between the measured response-time CDF and the response-time CDFs produced by each service-time hypothesis. This became a separate validation pipeline implemented in \texttt{analysis/des/des\_m0\_m1\_m2\_compare.py}.
+
+For each stable trace, the same arrival sequence is replayed through three DES variants:
+
+\begin{itemize}
+    \item \textbf{M0}: constant mean service time $E[S]=S_0$;
+    \item \textbf{M1}: linear mean service time $E[S]=S_0+\alpha\rho_0$;
+    \item \textbf{M2}: hyperbolic mean service time $E[S]=S_0/(1-\beta\rho_0)$.
+\end{itemize}
+
+The output table \texttt{results/tables/des\_m0\_m1\_m2\_results.csv} records the KS distance from the measured response-time CDF for each model. A follow-up script, \texttt{analysis/des/plot\_supervisor\_followup.py}, extracts the clearest cases where M2 improves on M0 and plots them in \texttt{results/figures/m2\_beats\_m0\_cdf.png}. This comparison is important because a service-time model should not only fit measured service times; it should also improve the simulated response-time distribution.
 
 \subsection{Lognormal Service Time Parameterisation}
 
@@ -128,7 +142,13 @@ The Kolmogorov–Smirnov (KS) distance between two empirical distributions $F_1$
 d_\text{KS} = \sup_x |F_1(x) - F_2(x)|.
 \]
 
-A two-pointer $O(n + m)$ implementation operating on pre-sorted arrays is used. Lower KS distance indicates better agreement between the simulated and observed response-time CDFs. The improvement $\Delta = d_\text{KS}(\text{std}) - d_\text{KS}(\text{LD})$ is the primary figure of merit for evaluating the load-dependent model.
+A two-pointer $O(n + m)$ implementation operating on pre-sorted arrays is used. Lower KS distance indicates better agreement between the simulated and observed response-time CDFs. For the load-dependent work, the key comparisons are $d_\text{KS}(\text{CDF\_REF}, \text{CDF\_M0})$, $d_\text{KS}(\text{CDF\_REF}, \text{CDF\_M1})$, and $d_\text{KS}(\text{CDF\_REF}, \text{CDF\_M2})$.
+
+\subsection{Service-Time Distribution Inspection and ANOVA}
+
+The final analysis step tests the constant-service-time assumption directly at the trace level. The script \texttt{analysis/des/anova\_service\_time.py} groups per-request \texttt{service\_ms} samples by arrival rate and applies one-way ANOVA to $\log(\texttt{service\_ms})$. The log transform is used because the empirical service-time histograms are right-skewed and approximately log-normal.
+
+The null hypothesis is that the mean log service time is identical across arrival rates, which corresponds to the M0 assumption that service time is independent of load. The alternative hypothesis is that service time depends on arrival rate. The output is \texttt{results/tables/service\_time\_anova.csv}; interpretation uses both $p$-value and $\eta^2$ effect size, because the large trace sizes make small differences statistically significant.
 
 \subsection{Interactive Visualiser}
 

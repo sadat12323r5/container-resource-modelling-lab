@@ -14,6 +14,9 @@ MLASP treats the system as a black box: given a configuration and a workload, a 
 \paragraph{Falsifiability.}
 MLASP's ML model has no falsifiable structural predictions — it fits whatever pattern is in the training data. The $\beta$ model makes strong prior predictions: CPU-bound concurrent servers will have $\beta > 0$; I/O-bound servers will have $\beta \approx 0$; GIL-constrained runtimes will have $\beta \approx 0$. All nine servers in this study confirmed these predictions, including in directions not optimised for (e.g.\ Go lognormal showing $\beta = 0.976$ due to goroutine scheduler contention — an unexpected finding that the theory correctly anticipates).
 
+\paragraph{Updated interpretation.}
+The final Thesis~B interpretation is more cautious than the initial framing above: the experiments broadly support the structural prediction, but not every server is positive evidence for pure CPU Processor Sharing. Some servers are controls with near-constant service time, Java is affected by JIT warmup, and SQLite points toward a database-lock/tandem-queue explanation. This distinction is important because the thesis contribution is strongest when it identifies \emph{which} model assumption fails, rather than forcing every server into the same explanation.
+
 \paragraph{Calibration cost.}
 MLASP requires a labelled training dataset collected across a range of configurations and workloads, followed by model training, validation, and hyperparameter selection. The $\beta$ model requires a single load sweep (already performed as standard load testing) and a two-parameter nonlinear curve fit that runs in under a second. There is no training set, no held-out validation set, and no risk of overfitting.
 
@@ -35,17 +38,19 @@ Nine server implementations spanning five languages (Go, Java, Node.js, Python, 
 
 \subsection{Discovery and Characterisation of Load-Dependent Service Times}
 
-The central empirical finding is that the M/G/$c$ constant-service-time assumption is violated for all CPU-bound server implementations in the study. Mean service time grows with utilisation according to a hyperbolic model:
+The central empirical finding is that the M/G/$c$ constant-service-time assumption is violated for several CPU-bound server implementations in the study. Mean service time grows with nominal utilisation and can be modelled by the hyperbolic form:
 
 \[
-E[S](\rho) = \frac{S_0}{1 - \beta\rho},
+E[S](\rho_0) = \frac{S_0}{1 - \beta\rho_0},
 \]
 
-where $\beta \in [0, 1)$ quantifies the degree of OS-level Processor Sharing caused by kernel CPU time-slicing among concurrent request handlers. The parameter $\beta$ can be estimated reliably from a small number of load-test traces and provides an interpretable characterisation of how CPU-bound a server's processing is.
+where $\rho_0=\lambda S_0/c$ and $\beta \in [0, 1)$ quantifies the degree of OS-level Processor Sharing caused by kernel CPU time-slicing among concurrent request handlers. The parameter $\beta$ provides an interpretable characterisation of how strongly wall-clock service time changes under load. The result is deliberately not universal: Python DSP~(1c), Node DSP~(3c), and Java DSP~(3c) behave approximately as constant-service controls over the measured range, while Apache DSP, Go lognormal, Node DSP~(1c), and Python DSP~(3c) provide the main positive cases.
 
-\subsection{Load-Dependent DES and KS Validation}
+\subsection{M0/M1/M2 DES, Histograms, and ANOVA}
 
-A load-dependent variant of the M/G/$c$ discrete-event simulator was implemented and validated against all trace files using the Kolmogorov–Smirnov distance as the goodness-of-fit metric. The load-dependent model improved on the standard M/G/$c$ baseline at 100\% of stable operating points for every CPU-bound server (Apache DSP/MSG, Go lognormal, Node DSP 1c, Python DSP 3c), with the largest single-point KS improvement of $+0.237$. Servers with $\beta \approx 0$ (Python DSP 1c, Go SQLite) correctly showed no degradation, confirming that the framework self-consistently selects the standard model where the load-dependence assumption does not apply.
+A load-dependent variant of the M/G/$c$ discrete-event simulator was implemented and validated against measured traces using Kolmogorov--Smirnov distance. The final validation compares four CDFs: the measured response-time CDF (CDF\_REF), the constant-service DES (CDF\_M0), the linear-service DES (CDF\_M1), and the hyperbolic-service DES (CDF\_M2). The important finding is nuanced: M2 does not dominate M1 at every point, but it clearly improves on M0 in the workloads where the constant-service assumption fails. For example, Python DSP~(3c) at 200~rps improves from KS $0.2943$ under M0 to $0.1153$ under M2, Apache DSP~(1c) at 75~rps improves from $0.4828$ to $0.3671$, and Go lognormal~(1c) at 200~rps improves from $0.1815$ to $0.0925$.
+
+This simulation evidence is supported by two additional checks. First, per-rate service-time histograms show that affected servers develop shifted and heavier-tailed service-time distributions as arrival rate increases. Second, one-way ANOVA on $\log(\texttt{service\_ms})$ rejects the constant-service hypothesis for the main affected workloads, with meaningful effect sizes for Apache DSP~(1c) ($\eta^2=0.3074$), Node DSP~(1c) ($\eta^2=0.1042$), Go lognormal~(1c) ($\eta^2=0.0339$), and Python DSP~(3c) ($\eta^2=0.0268$). Because the traces are large, the thesis interprets ANOVA using effect size as well as $p$-value.
 
 \subsection{Interactive Visualisation and Live Load Tool}
 
@@ -55,7 +60,7 @@ A browser-based visualiser (\texttt{visualiser.html}) was built to make the mode
 \section{Limitations}
 
 \paragraph{Fixed-point utilisation.}
-The load-dependent DES uses the observed $\rho$ from the summary CSV as a fixed calibration point rather than solving the implicit self-consistency equation $\rho = \lambda E[S](\rho)/(c \cdot 1000)$. This works well for validation against traces that were collected at known operating points but would require a fixed-point solver to predict behaviour at an \emph{a priori} unknown arrival rate.
+The current M0/M1/M2 validation evaluates each trace at its observed arrival rate and uses $\rho_0=\lambda S_0/c$ to choose the fitted service mean. This works for comparing against traces that were collected at known operating points. A true capacity forecaster, however, must solve the self-consistency problem at an unobserved future arrival rate, where the inflated service time changes utilisation and utilisation changes service time. That requires a fixed-point solver for $\rho^* = \lambda E[S](\rho^*)/(c \cdot 1000)$.
 
 \paragraph{Structural mismatch for cluster architectures.}
 The Node.js \texttt{cluster} module distributes connections by Bernoulli splitting across independent worker processes, making it architecturally three independent M/G/1 queues rather than a shared-queue M/G/3 system. The M/G/$c$ DES cannot capture this correctly regardless of the service-time model. Extending the simulator to model independent parallel queues with probabilistic routing would be straightforward but was outside the scope of this thesis.
