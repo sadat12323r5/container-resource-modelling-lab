@@ -15,6 +15,9 @@ venv/
 logs and des/experiments/
 logs and des/requests_old_backup.csv
 
+# Local thesis PDF/zip exports
+docs/latex/exports/
+
 # OS
 .DS_Store
 Thumbs.db

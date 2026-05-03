@@ -652,7 +652,7 @@ access patterns.
 
 ## Repository Layout
 
-See [PROJECT_MAP.md](PROJECT_MAP.md) for the current modular workspace map.
+See [docs/PROJECT_MAP.md](docs/PROJECT_MAP.md) for the current modular workspace map.
 
 ```text
 Capacity_lab/
@@ -660,9 +660,10 @@ Capacity_lab/
 +-- analysis/             # DES, load generators, orchestration, reporting, visualisation
 +-- data/                 # Experiment traces and live container CSV logs
 +-- results/              # Cross-server figures and CSV result tables
-+-- docs/                 # Experiment log, difficulties log, thesis source, references
++-- docs/                 # Project map, logs, thesis source, references
 +-- docker-compose.yml
 +-- environment.yml
++-- prometheus.yml
 +-- README.md
 ```
 
