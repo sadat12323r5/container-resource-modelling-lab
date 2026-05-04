@@ -516,6 +516,7 @@ the modelling direction changed, and what remains to ask the supervisor.
 | `docs/latex/thesis/conclusion_b.tex` | Thesis B conclusion and future work: contributions, limitations, MLASP comparison, why service-time ML was replaced by the mechanistic beta model, why ML remains useful for arrival-rate forecasting, industrial scalability, Kubernetes HPA/feedforward autoscaling relevance, and candidate Thesis C models. |
 | `docs/latex/thesis/mywork.tex` | Updated literature review positioning: MLASP comparison, high-value open gaps in capacity planning, and the corrected explanation of how the Thesis A ML-DES plan evolved into the current mechanistic beta + future arrival-forecasting approach. |
 | `docs/DIFFICULTIES.md` | Raw research/debugging log that backs the `research_journey.tex` chapter. This is the detailed source of the mishaps, fixes, and discoveries. |
+| `docs/slides/thesis_b_slides.html` | Browser-based Thesis B progress deck covering motivation, platform progress, research pivot, M0/M1/M2 validation, histograms, ANOVA, limitations, and Thesis C directions. |
 
 The key supervisor discussion point is documented in the conclusion and future
 work sections: first present the finding that CPU-bound containerised servers

@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thesis B Progress - Load-Dependent Capacity Modelling</title>
+  <style>
+    :root {
+      --bg: #101418;
+      --panel: #171d23;
+      --ink: #f4f7fb;
+      --muted: #9fb0c3;
+      --accent: #2fb6a3;
+      --accent2: #f2c14e;
+      --line: #2b3642;
+      --warn: #ef6f6c;
+      --good: #7bd88f;
+      --blue: #77a6f7;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); }
+    body { overflow: hidden; }
+
+    .deck {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    .slide {
+      width: 100vw;
+      height: 100vh;
+      display: none;
+      padding: 56px 72px 54px;
+      background:
+        linear-gradient(90deg, rgba(47, 182, 163, 0.10), transparent 38%),
+        radial-gradient(circle at 88% 12%, rgba(119, 166, 247, 0.13), transparent 28%),
+        var(--bg);
+    }
+
+    .slide.active {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 28px;
+    }
+
+    .kicker {
+      color: var(--accent);
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font-size: 62px;
+      line-height: 1.04;
+      max-width: 1050px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 44px;
+      line-height: 1.12;
+      max-width: 1120px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 27px;
+      color: var(--ink);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    p, li {
+      font-size: 24px;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+    ul { margin: 0; padding-left: 30px; }
+    li { margin: 12px 0; }
+
+    .subtitle {
+      font-size: 28px;
+      color: var(--muted);
+      max-width: 960px;
+      margin-top: 20px;
+    }
+
+    .content {
+      align-self: stretch;
+      min-height: 0;
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 34px;
+      align-items: center;
+      height: 100%;
+    }
+
+    .two.wide-left { grid-template-columns: 1.16fr 0.84fr; }
+    .two.wide-right { grid-template-columns: 0.82fr 1.18fr; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      height: 100%;
+      align-content: center;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      min-height: 150px;
+    }
+
+    .card strong, .metric strong {
+      color: var(--ink);
+      display: block;
+      font-size: 27px;
+      margin-bottom: 10px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      margin-top: 26px;
+    }
+
+    .metric {
+      border-left: 5px solid var(--accent);
+      background: rgba(255,255,255,0.04);
+      padding: 18px 20px;
+      border-radius: 6px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 19px;
+    }
+
+    .equation {
+      font-family: Consolas, "Courier New", monospace;
+      color: var(--ink);
+      background: #0b0f13;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px 26px;
+      font-size: 30px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 21px;
+      color: var(--muted);
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 13px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--ink); font-size: 20px; }
+
+    .figure {
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 650px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .figure img {
+      max-width: 100%;
+      max-height: 610px;
+      display: block;
+    }
+
+    .caption {
+      color: var(--muted);
+      font-size: 19px;
+      margin-top: 10px;
+    }
+
+    .tag {
+      display: inline-block;
+      color: #06110f;
+      background: var(--accent);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 17px;
+      font-weight: 700;
+      margin: 5px 6px 5px 0;
+    }
+    .tag.yellow { background: var(--accent2); }
+    .tag.red { background: var(--warn); }
+    .tag.blue { background: var(--blue); }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      color: #738397;
+      font-size: 16px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 12px;
+    }
+
+    .progress {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      height: 5px;
+      width: 0%;
+      background: var(--accent);
+      transition: width 160ms ease;
+      z-index: 5;
+    }
+
+    .notes { display: none; }
+
+    .small li, .small p { font-size: 21px; }
+    .center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      height: 100%;
+    }
+
+    .big-quote {
+      font-size: 42px;
+      line-height: 1.18;
+      color: var(--ink);
+      max-width: 1050px;
+    }
+
+    .callout {
+      background: rgba(47, 182, 163, 0.12);
+      border: 1px solid rgba(47, 182, 163, 0.45);
+      border-radius: 8px;
+      padding: 24px 28px;
+      color: var(--ink);
+      font-size: 27px;
+      line-height: 1.35;
+    }
+
+    @media print {
+      body { overflow: visible; background: white; }
+      .deck { height: auto; }
+      .slide, .slide.active {
+        display: grid;
+        width: 13.333in;
+        height: 7.5in;
+        page-break-after: always;
+      }
+      .progress { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+
+    <section class="slide active">
+      <header>
+        <div class="kicker">Thesis B Progress</div>
+        <h1>Load-Dependent Capacity Modelling for Dockerised Services</h1>
+        <p class="subtitle">From standard M/G/c validation to a mechanistic service-time model grounded in runtime and OS scheduling behaviour.</p>
+      </header>
+      <div class="content">
+        <div class="metric-grid">
+          <div class="metric"><strong>11</strong><span>server configurations</span></div>
+          <div class="metric"><strong>5</strong><span>runtime families</span></div>
+          <div class="metric"><strong>3</strong><span>service-time models</span></div>
+          <div class="metric"><strong>1</strong><span>central pivot</span></div>
+        </div>
+      </div>
+      <footer class="footer"><span>Sadat Kabir</span><span>Thesis B</span></footer>
+      <aside class="notes">Open by saying this is not a replacement of Thesis A, but the new work from Thesis B onwards.</aside>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Motivation</div><h2>The original assumption was simple: service time is independent of load</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <div class="equation">response time = queue time + service time
+
+rho = lambda * E[S] / c</div>
+          <p class="caption">Classical M/G/c assumes the distribution of S is fixed.</p>
+        </div>
+        <div class="card">
+          <h3>Capacity planning question</h3>
+          <p>Given a measured trace of a containerised service, can we predict the response-time distribution at higher load without running the service at that load?</p>
+        </div>
+      </div>
+      <footer class="footer"><span>Motivation</span><span>2</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Experimental Platform</div><h2>Thesis B expanded the lab into a multi-runtime benchmark</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>CPU-bound DSP</strong><p>AES decrypt, FIR filter, AES encrypt across Apache, Go, Node, Python, Java.</p></div>
+        <div class="card"><strong>I/O-bound SQLite</strong><p>Go service backed by SQLite/WAL, exposing hidden database-lock behaviour.</p></div>
+        <div class="card"><strong>Multi-worker variants</strong><p>Node cluster, Python Gunicorn workers, Java thread pool, Go SQLite WAL.</p></div>
+        <div class="card"><strong>Open-loop load</strong><p>Poisson arrivals at fixed rates to match the M/G/c arrival assumption.</p></div>
+        <div class="card"><strong>Request-level traces</strong><p>Per-request arrival, service, queue, response, and status code.</p></div>
+        <div class="card"><strong>DES validation</strong><p>CDF overlays and KS distance for replay, bootstrap, parametric, and M0/M1/M2 modes.</p></div>
+      </div>
+      <footer class="footer"><span>Platform</span><span>3</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Progress</div><h2>What was built this term</h2></header>
+      <div class="content">
+        <table>
+          <tr><th>Area</th><th>Delivered</th><th>Why it matters</th></tr>
+          <tr><td>Servers</td><td>11 Docker configs across Go, Apache/PHP, Node, Python, Java, SQLite</td><td>Broad enough to compare runtime/concurrency behaviour</td></tr>
+          <tr><td>DES</td><td>M/G/1 and M/G/c replay engines with KS validation</td><td>Separates queueing-model mismatch from distribution mismatch</td></tr>
+          <tr><td>Results</td><td>Cross-server figures, CDF overlays, fit tables, ANOVA table</td><td>Evidence is reproducible and inspectable</td></tr>
+          <tr><td>Docs</td><td>Thesis B chapters, README, project map, research journey</td><td>The discovery path is now part of the thesis narrative</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Progress</span><span>4</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Early Discovery</div><h2>Instrumentation had to be fixed before the model could be trusted</h2></header>
+      <div class="content two">
+        <div>
+          <ul>
+            <li>Initial service-time logging confused service demand with handler wall-clock duration.</li>
+            <li>Apache initially served the wrong route but still returned HTTP 200.</li>
+            <li>Docker CPU limits needed both quota and CPU pinning.</li>
+            <li>Concurrent CSV writes required locking.</li>
+            <li>Rejected requests had to be excluded near saturation.</li>
+          </ul>
+        </div>
+        <div class="callout">The difficulties were not side stories. They explain why the final traces are credible.</div>
+      </div>
+      <footer class="footer"><span>Research Journey</span><span>5</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Pivot</div><h2>The original ML plan became unnecessary for service-time modelling</h2></header>
+      <div class="content two">
+        <div class="card">
+          <h3>Original Thesis A plan</h3>
+          <p>KDE, GMM, or learned regressors would model service-time distributions from traces.</p>
+        </div>
+        <div class="card">
+          <h3>What the data showed</h3>
+          <p>The distribution shape was often stable, while the mean moved systematically with utilisation.</p>
+        </div>
+      </div>
+      <footer class="footer"><span>Pivot</span><span>6</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Core Finding</div><h2>For some CPU-bound servers, service time grows with load</h2></header>
+      <div class="content center">
+        <p class="big-quote">The M/G/c constant-service-time assumption is not always valid for real containerised services.</p>
+        <p class="subtitle">Wall-clock service time can include scheduler delay when request handlers compete for pinned CPU cores.</p>
+      </div>
+      <footer class="footer"><span>Core finding</span><span>7</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Mechanism</div><h2>OS/runtime time-sharing explains the service-time inflation</h2></header>
+      <div class="content two">
+        <div>
+          <ul>
+            <li>Multiple handlers become runnable under load.</li>
+            <li>The scheduler time-slices the pinned CPU core.</li>
+            <li>Each handler performs similar CPU work, but progresses more slowly in wall-clock time.</li>
+            <li>This gives Processor-Sharing-like behaviour without claiming the application is literally M/M/1-PS.</li>
+          </ul>
+        </div>
+        <div class="equation">E[S](rho0) = S0 / (1 - beta*rho0)
+
+rho0 = lambda*S0/c</div>
+      </div>
+      <footer class="footer"><span>Mechanism</span><span>8</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Models</div><h2>M0, M1, and M2 are three service-time hypotheses</h2></header>
+      <div class="content">
+        <table>
+          <tr><th>Model</th><th>Formula</th><th>Meaning</th></tr>
+          <tr><td>M0</td><td><code>E[S] = S0</code></td><td>Classical constant service time</td></tr>
+          <tr><td>M1</td><td><code>E[S] = S0 + alpha*rho0</code></td><td>Linear empirical growth</td></tr>
+          <tr><td>M2</td><td><code>E[S] = S0 / (1 - beta*rho0)</code></td><td>Hyperbolic PS-motivated growth</td></tr>
+        </table>
+        <p class="caption">The thesis claim is not that M2 always wins. The claim is that M0 fails in important workloads, and M2 gives a mechanistic correction.</p>
+      </div>
+      <footer class="footer"><span>M0/M1/M2</span><span>9</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Service-Time Fits</div><h2>Measured service time is not flat for several workloads</h2></header>
+      <div class="content two wide-right">
+        <div>
+          <p><span class="tag">Apache DSP</span><span class="tag">Go lognormal</span><span class="tag">Node 1c</span><span class="tag">Python 3c</span></p>
+          <ul class="small">
+            <li>Positive service-time growth appears in CPU-bound/concurrent cases.</li>
+            <li>Python 1c and Node 3c behave closer to constant-service controls.</li>
+            <li>Java is treated separately due to JIT warmup.</li>
+          </ul>
+        </div>
+        <div>
+          <div class="figure"><img src="../../results/figures/service_time_fit.png" alt="Service time fit"></div>
+          <p class="caption">Figure: service-time fit across servers.</p>
+        </div>
+      </div>
+      <footer class="footer"><span>Results</span><span>10</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Supervisor Question</div><h2>Does the better service-time model improve response-time simulation?</h2></header>
+      <div class="content two">
+        <div>
+          <ul>
+            <li>Fit quality alone is not enough.</li>
+            <li>The DES must compare response-time CDFs.</li>
+            <li>The key comparison is CDF_REF vs CDF_M0, CDF_M1, and CDF_M2.</li>
+          </ul>
+        </div>
+        <div class="equation">CDF_REF = measured response times
+CDF_M0  = DES with constant S0
+CDF_M1  = DES with linear E[S]
+CDF_M2  = DES with hyperbolic E[S]</div>
+      </div>
+      <footer class="footer"><span>Validation logic</span><span>11</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">CDF Evidence</div><h2>M2 clearly beats M0 in selected failure cases</h2></header>
+      <div class="content two wide-right">
+        <div class="small">
+          <ul>
+            <li>Python DSP 3c at 200 rps: KS M0 0.2943 -> KS M2 0.1153.</li>
+            <li>Apache DSP 1c at 75 rps: KS M0 0.4828 -> KS M2 0.3671.</li>
+            <li>Go lognormal 1c at 200 rps: KS M0 0.1815 -> KS M2 0.0925.</li>
+          </ul>
+          <p class="caption">This is the strongest innovation case: M0 fails, so a load-dependent model is needed.</p>
+        </div>
+        <div class="figure"><img src="../../results/figures/m2_beats_m0_cdf.png" alt="M2 beats M0 CDF"></div>
+      </div>
+      <footer class="footer"><span>CDF results</span><span>12</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Full Comparison</div><h2>M1 is often competitive, which makes the final claim more careful</h2></header>
+      <div class="content two wide-left">
+        <div class="figure"><img src="../../results/figures/des_m0_m1_m2_cdf.png" alt="M0 M1 M2 comparison"></div>
+        <div>
+          <ul>
+            <li>M2 is not best everywhere.</li>
+            <li>M1 can approximate finite-range service-time growth.</li>
+            <li>M2 matters because it is mechanistic and has saturation behaviour.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Nuance</span><span>13</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Distribution Evidence</div><h2>Histograms show how service time changes with arrival rate</h2></header>
+      <div class="content two">
+        <div class="figure"><img src="../../results/figures/service_time_hist_apache_dsp_1c.png" alt="Apache histogram"></div>
+        <div>
+          <h3>Apache DSP 1c</h3>
+          <ul>
+            <li>Strongest visible M0 violation.</li>
+            <li>High-rate traces develop a much heavier right tail.</li>
+            <li>Consistent with OS process contention on one pinned core.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Histograms</span><span>14</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Controlled Surprise</div><h2>Go lognormal was meant to be fixed, but wall-clock time still moved</h2></header>
+      <div class="content two">
+        <div>
+          <h3>Why this matters</h3>
+          <ul>
+            <li>The programmed work distribution was fixed.</li>
+            <li>Measured wall-clock service time still increased under load.</li>
+            <li>The likely cause is goroutine/runtime scheduling inside the measured interval.</li>
+          </ul>
+        </div>
+        <div class="figure"><img src="../../results/figures/service_time_hist_go_1c.png" alt="Go histogram"></div>
+      </div>
+      <footer class="footer"><span>Go finding</span><span>15</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Statistical Confirmation</div><h2>ANOVA tests whether service time depends on arrival rate</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <div class="equation">H0: log(service_ms) is independent of rate
+H1: log(service_ms) depends on rate</div>
+          <p class="caption">The log transform is used because service-time distributions are right-skewed / approximately log-normal.</p>
+        </div>
+        <table>
+          <tr><th>Server</th><th>Effect size eta²</th><th>Interpretation</th></tr>
+          <tr><td>Apache DSP 1c</td><td>0.3074</td><td>strong violation</td></tr>
+          <tr><td>Node DSP 1c</td><td>0.1042</td><td>meaningful</td></tr>
+          <tr><td>Go 1c</td><td>0.0339</td><td>smaller but clear</td></tr>
+          <tr><td>Python DSP 3c</td><td>0.0268</td><td>modest</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>ANOVA</span><span>16</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Structural Findings</div><h2>Not every mismatch is solved by changing service time</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Node.js cluster</strong><p>Not a shared M/G/3 queue. It is closer to 3 independent M/G/1 queues with splitting.</p></div>
+        <div class="card"><strong>Go SQLite</strong><p>Application queue feeds a hidden SQLite/WAL lock queue: a tandem system.</p></div>
+        <div class="card"><strong>Java DSP</strong><p>JIT warmup changes service time for runtime reasons, not queueing reasons.</p></div>
+      </div>
+      <footer class="footer"><span>Model boundaries</span><span>17</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Contributions</div><h2>What Thesis B now contributes</h2></header>
+      <div class="content">
+        <ul>
+          <li>A reproducible multi-runtime Docker capacity-planning dataset.</li>
+          <li>M/G/1 and M/G/c DES validation with response-CDF KS metrics.</li>
+          <li>Discovery that measured service time can be load-dependent.</li>
+          <li>M0/M1/M2 model comparison showing when constant service time fails.</li>
+          <li>Experimental, simulation, and statistical evidence: traces, CDFs, histograms, ANOVA.</li>
+          <li>A documented research journey explaining why the model changed.</li>
+        </ul>
+      </div>
+      <footer class="footer"><span>Contributions</span><span>18</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Future Work</div><h2>Thesis C directions are now clearer</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Fixed-point DES</strong><p>Predict unseen arrival rates by solving rho* = lambda E[S](rho*) / c.</p></div>
+        <div class="card"><strong>Arrival forecasting</strong><p>Use ARIMA/Prophet for future lambda, then feed DES for proactive scaling.</p></div>
+        <div class="card"><strong>Novel queue models</strong><p>Priority classes, tandem queue, or retry-feedback loop.</p></div>
+      </div>
+      <footer class="footer"><span>Thesis C</span><span>19</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Closing</div><h2>The revised thesis statement</h2></header>
+      <div class="content center">
+        <p class="big-quote">Standard M/G/c works only when service time is exogenous. In real containerised runtimes, service time can itself become load-dependent.</p>
+        <p class="subtitle">The value of Thesis B is identifying when this happens, why it happens, and how to correct the DES when M0 fails.</p>
+      </div>
+      <footer class="footer"><span>Close</span><span>20</span></footer>
+    </section>
+
+  </main>
+  <div class="progress" id="progress"></div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const progress = document.getElementById("progress");
+    let index = 0;
+
+    function show(i) {
+      index = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((slide, idx) => slide.classList.toggle("active", idx === index));
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      history.replaceState(null, "", `#${index + 1}`);
+    }
+
+    function fromHash() {
+      const n = Number(location.hash.replace("#", ""));
+      if (Number.isFinite(n) && n >= 1) show(n - 1);
+    }
+
+    window.addEventListener("hashchange", fromHash);
+    document.addEventListener("keydown", (event) => {
+      if (["ArrowRight", "PageDown", " "].includes(event.key)) show(index + 1);
+      if (["ArrowLeft", "PageUp", "Backspace"].includes(event.key)) show(index - 1);
+      if (event.key === "Home") show(0);
+      if (event.key === "End") show(slides.length - 1);
+    });
+    document.addEventListener("click", () => show(index + 1));
+    fromHash();
+    show(index);
+  </script>
+</body>
+</html>

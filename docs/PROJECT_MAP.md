@@ -37,6 +37,7 @@ Capacity_lab/
 |   +-- latex/
 |   |   +-- thesis/             LaTeX source and local figure assets
 |   |   +-- exports/            Compiled PDFs and export zips
+|   +-- slides/                 Thesis B browser-based slide deck
 |   +-- references/             Papers and course material
 |
 +-- .github/workflows/          CI checks
