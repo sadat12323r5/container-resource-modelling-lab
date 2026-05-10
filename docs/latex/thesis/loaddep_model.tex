@@ -1,4 +1,4 @@
-\chapter{Load-Dependent Service Time Model}
+﻿\chapter{Load-Dependent Service Time Model}
 \label{ch:loaddep}
 
 \section{Motivation: Violation of the Constant-Service-Time Assumption}
@@ -6,7 +6,7 @@
 
 The standard M/G/$c$ model assumes that the service-time distribution $G$ is independent of the arrival rate $\lambda$ and the current system load. In this project that assumption became a testable empirical question, because every trace contains a per-request \texttt{service\_ms} measurement in addition to client-observed \texttt{response\_ms}.
 
-The summary CSVs show that the assumption is sometimes valid and sometimes not. Python DSP~(1c), Node DSP~(3c), Java DSP~(3c), and Go SQLite~(1c) have approximately constant mean service time over the fitted range. However, several CPU-bound workloads show clear service-time growth as arrival rate increases. Apache DSP~(1c), Apache MSG~(1c), Go lognormal~(1c), Node DSP~(1c), and Python DSP~(3c) all show a positive dependence between mean service time and utilisation. This is the main model violation studied in Thesis~B.
+The summary CSVs show that the assumption is sometimes valid and sometimes not. Python DSP~(1c), Node DSP~(3c), Java DSP~(3c), and Go SQLite~(1c) have approximately constant mean service time over the fitted range. However, several CPU-bound workloads show clear service-time growth as arrival rate increases. Apache DSP~(1c), Apache MSG~(1c), Go lognormal~(1c), Node DSP~(1c), and Python DSP~(3c) all show a positive dependence between mean service time and utilisation. This is the main model violation studied in this thesis.
 
 The practical consequence is important: if service time increases with load, a DES calibrated at low load will underestimate response time at higher load even if the arrival process, worker count, and base service-time distribution are correct.
 
@@ -220,17 +220,62 @@ Node DSP (3c) & 5 & 0.98 & 0.0018 & practically constant \\
 The ANOVA supports the CDF evidence: for several DSP workloads, service time is not independent of arrival rate. It also reinforces the need for caution. Statistical rejection alone is not enough, because very large samples make tiny differences significant. The strongest evidence comes from the combination of visible histogram shifts, meaningful $\eta^2$, improved M2-over-M0 CDF fit, and a plausible scheduling mechanism.
 
 %-------------------------------------------------------------
+\section{Exploratory Priority and Feedback Models}
+\label{sec:priority-exploratory}
+
+The hyperbolic M2 model was initially motivated by Processor Sharing, but it should not be interpreted as a literal claim that an FCFS application queue contains a hidden Processor-Sharing queue inside it. A more cautious interpretation is that M2 is a reduced-form correction: the application-level DES remains FCFS, while the service-time input is adjusted to account for scheduler-induced wall-clock slowdown.
+
+To test whether a more explicit scheduling structure could replace this reduced-form correction, two exploratory DES variants were implemented:
+
+\begin{enumerate}
+    \item \textbf{Preemptive-resume priority M/G/1}: DSP jobs are treated as class~2 low-priority jobs. Synthetic short class~1 jobs arrive according to a Poisson process and preempt DSP jobs. The preempted DSP job later resumes from its remaining service.
+    \item \textbf{Feedback priority queue}: each DSP job receives an initial high-priority service quantum. If the job is unfinished, the remaining work feeds back into a low-priority queue.
+\end{enumerate}
+
+These models were evaluated on selected high-mismatch CPU-bound traces plus a Python DSP~(1c) control. The validation uses the same measured response-time CDF and KS-distance metric as the M0/M1/M2 comparison. The key limitation is that the existing traces do not record a real class~1 arrival stream or feedback visits, so class~1 work and quantum sizes must be swept synthetically. The result is therefore exploratory rather than conclusive.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{des_priority_exploratory_cdf.png}
+\caption{Exploratory response-CDF comparison for FCFS M0, load-dependent M2, preemptive-resume priority, and feedback-priority DES variants.}
+\label{fig:priority-exploratory}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Average KS distance for the exploratory priority validation on selected traces.}
+\label{tab:priority-exploratory}
+\begin{tabular}{l r}
+\toprule
+\textbf{Model} & \textbf{Average KS} \\
+\midrule
+FCFS M0 & 0.4199 \\
+M2 load-dependent & 0.3727 \\
+Preemptive-resume priority & 0.4054 \\
+Feedback priority & 0.4215 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The result is useful because it rules out a premature modelling detour. The explicit priority models improve over FCFS M0 in some traces, but they do not beat M2 overall. The best model was M2 in six of the eight selected traces, while preemptive-resume priority was best only in the two Python DSP~(1c) control traces. This suggests that the current data is better explained by load-dependent wall-clock service time than by unobserved priority or feedback structure.
+
+The priority models remain plausible future directions, but only if the experiment is redesigned to make priority classes real and observable. A submission-level follow-up would add two endpoints or request classes, log the class of every request, and record feedback visits or service quanta explicitly. Without those new traces, priority/preemptive-resume validation is necessarily weaker than the M0/M1/M2 evidence chain.
+
+%-------------------------------------------------------------
 \section{Interpretation}
 \label{sec:ld-interpretation}
 
-The final Thesis~B position is therefore:
+The final position is therefore:
 
 \begin{enumerate}
     \item M0 is still the correct model for some workloads. Python DSP~(1c), Node DSP~(3c), and Java DSP~(3c) are approximately constant-service cases over the measured range.
     \item M0 fails for several CPU-bound DSP workloads because wall-clock service time changes with arrival rate.
     \item M1 often fits the measured mean service time well over a finite range, but it is descriptive rather than mechanistic.
     \item M2 is justified as a PS-motivated load-dependent model. It does not need to be identical to a classical M/M/1-PS queue to be useful; it borrows the correct nonlinear saturation shape for wall-clock service inflation.
-    \item In the CDF experiments requested by the supervisor, M2 clearly improves on M0 in selected cases where the constant-service assumption fails. This supports load dependence as a real modelling issue and motivates deeper mechanistic work in Thesis~C.
+    \item In the CDF experiments requested by the supervisor, M2 clearly improves on M0 in selected cases where the constant-service assumption fails. This supports load dependence as a real modelling issue and motivates deeper mechanistic follow-up work.
+    \item Exploratory priority and feedback DES variants were tested, but they did not outperform M2 on the selected traces. This supports keeping M2 as the main model while treating explicit priority/preemptive-resume queues as future work requiring newly instrumented two-class traces.
 \end{enumerate}
 
-This is a stronger thesis claim than simply reporting a curve fit. The work now includes experimental evidence (histograms and traces), simulation evidence (CDF\_REF vs.\ CDF\_M0/M1/M2), and analytical/statistical evidence (ANOVA on log service times) supporting the same conclusion: service time is not always exogenous in containerised microservices.
+This is a stronger thesis claim than simply reporting a curve fit. The work now includes experimental evidence (histograms and traces), simulation evidence (CDF\_REF vs.\ CDF\_M0/M1/M2), analytical/statistical evidence (ANOVA on log service times), and exploratory negative evidence against uninstrumented priority/feedback explanations. Together these support the same conclusion: service time is not always exogenous in containerised microservices.
+
+

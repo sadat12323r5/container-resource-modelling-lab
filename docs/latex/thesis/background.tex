@@ -1,6 +1,6 @@
-\chapter{Background}\label{ch:background}
+﻿\chapter{Background}\label{ch:background}
 
-For the purpose of this thesis, it was necessary for us to go through some of the content from the course COMP9334, which I have compiled below.
+This chapter summarises the queueing and performance-modelling concepts used throughout the thesis. The emphasis is practical: each concept is included because it is used later to interpret measured Docker traces, construct DES models, or diagnose why a classical queueing assumption fails.
 
 \section{Capacity Planning Concepts}
 
@@ -40,13 +40,25 @@ For an M/M/1 queue, arrival rate $\lambda$ and service rate $\mu$ yield:
 \rho = \frac{\lambda}{\mu}, \qquad R = \frac{1}{\mu - \lambda},
 \]
 
-where $\rho$ is utilization and $R$ is mean response time.  
-Systems remain stable only when $\rho < 1$.
+where $\rho$ is utilisation and $R$ is mean response time.
+Systems remain stable only when $\rho < 1$. As $\rho$ approaches one, small increases in arrival rate can cause large increases in response time because jobs spend more time waiting for service.
 
 The M/M/$c$ and M/G/1 models generalize these results to multiple servers
-and general service-time distributions. For M/G/1, the Pollaczek–Khinchine
+and general service-time distributions. For M/G/1, the Pollaczek--Khinchine
 formula characterizes mean waiting time based on the first two moments of
-service time.
+service time. The M/G/$c$ family is central to this thesis because the Docker servers are modelled as request arrivals feeding one or more workers.
+
+\section{The Constant-Service-Time Assumption}
+
+The standard M/G/$c$ abstraction assumes that the service-time distribution is exogenous: it is chosen independently of the arrival rate and does not change with utilisation. Under that assumption, increasing $\lambda$ increases queueing delay, but the distribution of service times remains fixed.
+
+This thesis treats that assumption as an empirical question. Each trace records \texttt{service\_ms} as well as \texttt{response\_ms}, so the data can reveal whether mean service time is approximately constant or whether it grows with load. When service time grows with utilisation, the usual M/G/$c$ model is missing a feedback path: load changes not only waiting time but also the time requests spend in service.
+
+\section{Processor Sharing and Time-Sharing}
+
+Processor Sharing (PS) is a queueing discipline in which all active jobs share the server capacity simultaneously. An ideal M/M/1-PS model gives a hyperbolic mean response-time form proportional to $1/(1-\rho)$. Real Linux scheduling is not literally an M/M/1-PS queue, but CPU-bound request handlers on a pinned core can exhibit PS-like wall-clock behaviour: the operating system time-slices the core among runnable handlers, so each handler performs similar CPU work but progresses more slowly in elapsed time.
+
+This thesis uses PS as a mechanistic motivation for load-dependent service-time models. The claim is deliberately limited: the DES remains an application-level FCFS queue, while the service-time input is corrected for scheduler-induced wall-clock slowdown.
 
 \section{Operational Laws}
 
@@ -55,7 +67,7 @@ stable system:
 
 \begin{itemize}
     \item \textbf{Utilisation Law}:\quad $U = X S$
-    \item \textbf{Little’s Law}:\quad $N = X R$
+    \item \textbf{Little's Law}:\quad $N = X R$
     \item \textbf{Forced Flow Law}:\quad $X(j) = V(j) X$
 \end{itemize}
 
@@ -104,3 +116,4 @@ reproducible modeling techniques, service-demand extraction, and
 comparison of analytical predictions with simulation results. These
 methods form the theoretical basis upon which later practical and
 experimental work can be built. Now we are going to examine some of the experimental work and industrial practices that have directed my thesis.
+

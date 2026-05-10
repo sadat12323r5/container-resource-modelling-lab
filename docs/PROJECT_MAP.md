@@ -58,4 +58,7 @@ python analysis/des/fit_service_time.py
 python analysis/des/des_m0_m1_m2_compare.py
 python analysis/des/plot_supervisor_followup.py
 python analysis/des/anova_service_time.py
+python analysis/des/fit_service_time_contention.py
+python analysis/des/des_m0_m1_m2_m3_compare.py
+python analysis/des/des_priority_exploratory.py
 ```

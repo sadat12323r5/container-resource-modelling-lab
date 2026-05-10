@@ -34,6 +34,7 @@
       height: 100vh;
       display: none;
       padding: 56px 72px 54px;
+      position: relative;
       background:
         linear-gradient(90deg, rgba(47, 182, 163, 0.10), transparent 38%),
         radial-gradient(circle at 88% 12%, rgba(119, 166, 247, 0.13), transparent 28%),
@@ -113,12 +114,15 @@
       align-content: center;
     }
 
+    .cards.two-col { grid-template-columns: repeat(2, 1fr); }
+
     .card {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 24px;
-      min-height: 150px;
+      padding: 22px;
+      min-height: 140px;
+      overflow: hidden;
     }
 
     .card strong, .metric strong {
@@ -228,9 +232,88 @@
       z-index: 5;
     }
 
+    .toolbar {
+      position: fixed;
+      right: 18px;
+      top: 14px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      opacity: 0.18;
+      transition: opacity 160ms ease;
+    }
+    .toolbar:hover,
+    body.editing .toolbar {
+      opacity: 1;
+    }
+    .toolbar button {
+      border: 1px solid var(--line);
+      background: #19212a;
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 8px 11px;
+      font: 700 13px "Segoe UI", Arial, sans-serif;
+      cursor: pointer;
+    }
+    .toolbar button.active {
+      background: var(--accent);
+      color: #06110f;
+      border-color: var(--accent);
+    }
+    body.editing [contenteditable="true"] {
+      outline: 1px dashed rgba(47, 182, 163, 0.7);
+      outline-offset: 4px;
+      cursor: text;
+    }
+    body.editing .movable {
+      cursor: grab;
+    }
+    body.editing .movable.selected {
+      outline: 3px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    body.editing .movable.dragging {
+      cursor: grabbing;
+      z-index: 20;
+    }
+    .freebox {
+      position: absolute;
+      left: 120px;
+      top: 180px;
+      width: 420px;
+      min-height: 90px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+      color: var(--ink);
+      font-size: 24px;
+      line-height: 1.3;
+      z-index: 8;
+    }
+    body.editing .slide {
+      user-select: text;
+    }
+
     .notes { display: none; }
 
     .small li, .small p { font-size: 21px; }
+    .tiny li, .tiny p, .tiny td, .tiny th { font-size: 18px; }
+    .fit-cards {
+      gap: 16px;
+    }
+    .fit-cards .card {
+      min-height: 0;
+      padding: 18px 20px;
+    }
+    .fit-cards .card strong {
+      font-size: 23px;
+      margin-bottom: 8px;
+    }
+    .fit-cards .card p {
+      font-size: 19px;
+      line-height: 1.25;
+    }
     .center {
       display: flex;
       flex-direction: column;
@@ -258,6 +341,10 @@
     }
 
     @media print {
+      @page {
+        size: 13.333in 7.5in;
+        margin: 0;
+      }
       body { overflow: visible; background: white; }
       .deck { height: auto; }
       .slide, .slide.active {
@@ -267,24 +354,33 @@
         page-break-after: always;
       }
       .progress { display: none; }
+      .toolbar { display: none; }
     }
   </style>
 </head>
 <body>
+  <div class="toolbar" aria-label="Slide editing controls">
+    <button id="editToggle" title="Toggle edit mode (E)">Edit</button>
+    <button id="addBox" title="Add a movable text box to the current slide">Add Text</button>
+    <button id="deleteBox" title="Delete the selected movable item">Delete</button>
+    <button id="saveEdits" title="Save edits in this browser">Save</button>
+    <button id="downloadDeck" title="Download an edited HTML copy">Download HTML</button>
+    <button id="resetEdits" title="Clear saved browser edits">Reset</button>
+  </div>
   <main class="deck">
 
     <section class="slide active">
       <header>
         <div class="kicker">Thesis B Progress</div>
-        <h1>Load-Dependent Capacity Modelling for Dockerised Services</h1>
-        <p class="subtitle">From standard M/G/c validation to a mechanistic service-time model grounded in runtime and OS scheduling behaviour.</p>
+        <h1>Building a Docker Capacity Modelling Lab</h1>
+        <p class="subtitle">How the platform, server catalogue, data pipeline, DES validation, and research pivot developed across Thesis B.</p>
       </header>
       <div class="content">
         <div class="metric-grid">
           <div class="metric"><strong>11</strong><span>server configurations</span></div>
           <div class="metric"><strong>5</strong><span>runtime families</span></div>
-          <div class="metric"><strong>3</strong><span>service-time models</span></div>
-          <div class="metric"><strong>1</strong><span>central pivot</span></div>
+          <div class="metric"><strong>3</strong><span>model families tested</span></div>
+          <div class="metric"><strong>1</strong><span>unexpected modelling pivot</span></div>
         </div>
       </div>
       <footer class="footer"><span>Sadat Kabir</span><span>Thesis B</span></footer>
@@ -292,20 +388,130 @@
     </section>
 
     <section class="slide">
-      <header><div class="kicker">Motivation</div><h2>The original assumption was simple: service time is independent of load</h2></header>
+      <header><div class="kicker">Motivation</div><h2>The starting problem was practical capacity planning</h2></header>
       <div class="content two wide-left">
         <div>
           <div class="equation">response time = queue time + service time
 
 rho = lambda * E[S] / c</div>
-          <p class="caption">Classical M/G/c assumes the distribution of S is fixed.</p>
+          <p class="caption">The first goal was to predict response-time distributions from measured traces.</p>
         </div>
-        <div class="card">
-          <h3>Capacity planning question</h3>
-          <p>Given a measured trace of a containerised service, can we predict the response-time distribution at higher load without running the service at that load?</p>
-        </div>
+        <div class="card"><h3>Capacity planning question</h3><p>Given a measured trace of a containerised service, can we predict what happens as load increases, and can we tell which modelling assumption breaks when prediction fails?</p></div>
       </div>
       <footer class="footer"><span>Motivation</span><span>2</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Thesis Framing</div><h2>The project has two connected goals</h2></header>
+      <div class="content two">
+        <div class="card">
+          <h3>1. Teaching artefact</h3>
+          <p>A runnable Docker lab where students can observe queueing behaviour, saturation, response-time CDFs, service-time distributions, and DES validation on their own machine.</p>
+        </div>
+        <div class="card">
+          <h3>2. Capacity-planning test-bed</h3>
+          <p>A controlled experimental platform for testing where classical queueing models work, where they fail, and what corrections are needed for real containerised services.</p>
+        </div>
+      </div>
+      <footer class="footer"><span>Two goals</span><span>3</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Targeted Gaps</div><h2>The test-bed targets practical gaps in industry capacity planning</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Explainability</strong><p>Dashboards show latency and CPU symptoms, but not which queueing assumption failed.</p></div>
+        <div class="card"><strong>Proactive scaling</strong><p>Autoscalers often react after overload. A model can forecast SLO risk before queues build.</p></div>
+        <div class="card"><strong>Distribution-level validation</strong><p>Industry SLOs often care about p95/p99; Thesis B validates full CDFs, but does not yet do a separate tail-latency study.</p></div>
+        <div class="card"><strong>Runtime diversity</strong><p>Go, Apache, Node, Python, Java, and SQLite do not expose the same queueing structure.</p></div>
+        <div class="card"><strong>Model boundaries</strong><p>Some failures need load-dependent service time; others need split queues or tandem queues.</p></div>
+        <div class="card"><strong>Reproducibility</strong><p>A small local lab lets these effects be measured and taught without production infrastructure.</p></div>
+      </div>
+      <footer class="footer"><span>Industry gaps</span><span>4</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Industry Problem</div><h2>Modern capacity planning is mostly reactive, not explanatory</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Dashboards show symptoms</strong><p>Prometheus/Grafana can show CPU and latency rising, but not which queueing assumption broke.</p></div>
+        <div class="card"><strong>Autoscalers react late</strong><p>Kubernetes HPA scales after CPU or latency crosses a threshold, so queues may already be building.</p></div>
+        <div class="card"><strong>Microservices differ</strong><p>The same load can mean CPU contention, runtime warmup, database locking, or split queues.</p></div>
+        <div class="card"><strong>Response distribution matters</strong><p>Capacity decisions need more than mean latency; CDF validation is a step toward tail/SLO analysis.</p></div>
+        <div class="card"><strong>Black-box ML is brittle</strong><p>ML can predict a known regime but may not explain why the system saturates or where it will fail.</p></div>
+        <div class="card"><strong>Need a bridge</strong><p>The goal became: combine real traces, queueing theory, and simulation into an interpretable workflow.</p></div>
+      </div>
+      <footer class="footer"><span>Industry motivation</span><span>3</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Thesis B Goal</div><h2>Turn the Thesis A prototype into a reproducible capacity lab</h2></header>
+      <div class="content two">
+        <div>
+          <h3>Before</h3>
+          <ul>
+            <li>Single-server Docker prototype.</li>
+            <li>Basic DES validation idea.</li>
+            <li>Planned ML-DES pipeline for service-time distributions.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>After</h3>
+          <ul>
+            <li>Multi-runtime server catalogue.</li>
+            <li>Trace-driven M/G/1 and M/G/c validation.</li>
+            <li>Load-dependent service-time model and supervisor follow-up tests.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Goal</span><span>4</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Against Thesis A Plan</div><h2>What was planned vs what Thesis B actually delivered</h2></header>
+      <div class="content tiny">
+        <table>
+          <tr><th>Thesis A plan</th><th>Thesis B outcome</th><th>Status</th></tr>
+          <tr><td>Build a Docker microservice platform and run repeatable load tests</td><td>Expanded into 11 Docker server configurations with pinned CPU, Poisson load, and request-level traces</td><td>Exceeded</td></tr>
+          <tr><td>Validate single-server M/G/1 DES against measured traces</td><td>Implemented trace-driven DES and CDF/KS validation across multiple servers</td><td>Complete</td></tr>
+          <tr><td>Extend DES to multi-server / M/G/c cases</td><td>Implemented M/G/c validation and found where shared-queue M/G/c is valid or invalid</td><td>Complete + diagnostic</td></tr>
+          <tr><td>Use ML to learn service-time distributions</td><td>Pivoted: flexible ML was replaced by interpretable service-time models after mean service time showed structured load dependence</td><td>Changed direction</td></tr>
+          <tr><td>Forecast arrivals and build hybrid ML-DES</td><td>Not implemented yet; reframed as Thesis C/future work where ML forecasts lambda and DES predicts SLO risk</td><td>Deferred</td></tr>
+          <tr><td>Create educational/reproducible artefacts</td><td>README, project map, generated plots, thesis chapters, browser slide deck, and reproducible analysis scripts</td><td>Mostly complete</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Plan comparison</span><span>5</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Design Rationale</div><h2>The server catalogue was designed around modelling contrasts</h2></header>
+      <div class="content cards fit-cards">
+        <div class="card"><strong>Same workload, different runtimes</strong><p>DSP-AES was repeated across languages so differences could be attributed to runtime/concurrency, not application logic.</p></div>
+        <div class="card"><strong>CPU-bound vs I/O-bound</strong><p>CPU-bound DSP exposes processor scheduling; SQLite exposes database locks and I/O waiting.</p></div>
+        <div class="card"><strong>Single-core controls</strong><p>One pinned CPU core makes saturation and scheduling effects easier to observe.</p></div>
+        <div class="card"><strong>Multi-worker variants</strong><p>Three-worker versions test whether M/G/c with shared workers is the right abstraction.</p></div>
+        <div class="card"><strong>Expected control cases</strong><p>Python 1c and some low-load cases should behave closer to constant service time.</p></div>
+        <div class="card"><strong>Expected mismatch cases</strong><p>Node cluster and SQLite were likely to expose architectures beyond a single shared queue.</p></div>
+      </div>
+      <footer class="footer"><span>Server design</span><span>5</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Workload Choice</div><h2>DSP-AES was chosen to make CPU work comparable across languages</h2></header>
+      <div class="content two">
+        <div>
+          <ul>
+            <li>Each DSP request performs AES decrypt, FIR filter, then AES encrypt.</li>
+            <li>The input size is fixed, so the intended CPU work is similar from request to request.</li>
+            <li>This makes service-time changes with load more meaningful: the workload did not intentionally become harder.</li>
+            <li>The same DSP task across Apache, Node, Python, and Java highlights runtime behaviour.</li>
+            <li>Go was included separately through a synthetic lognormal server and SQLite-backed server.</li>
+          </ul>
+        </div>
+        <div class="equation">fixed request size
+fixed computation path
+different runtime architecture
+= comparable capacity experiment</div>
+      </div>
+      <footer class="footer"><span>Workload rationale</span><span>6</span></footer>
     </section>
 
     <section class="slide">
@@ -316,9 +522,180 @@ rho = lambda * E[S] / c</div>
         <div class="card"><strong>Multi-worker variants</strong><p>Node cluster, Python Gunicorn workers, Java thread pool, Go SQLite WAL.</p></div>
         <div class="card"><strong>Open-loop load</strong><p>Poisson arrivals at fixed rates to match the M/G/c arrival assumption.</p></div>
         <div class="card"><strong>Request-level traces</strong><p>Per-request arrival, service, queue, response, and status code.</p></div>
-        <div class="card"><strong>DES validation</strong><p>CDF overlays and KS distance for replay, bootstrap, parametric, and M0/M1/M2 modes.</p></div>
+        <div class="card"><strong>DES validation</strong><p>CDF overlays and KS distance for replay, bootstrap, parametric, and fitted load-dependent modes.</p></div>
       </div>
       <footer class="footer"><span>Platform</span><span>3</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Why These Servers?</div><h2>Each server was selected to test a specific architecture question</h2></header>
+      <div class="content tiny">
+        <table>
+          <tr><th>Server</th><th>Reason it was included</th><th>Question it tests</th></tr>
+          <tr><td>Go lognormal</td><td>Controlled synthetic service-time workload</td><td>If programmed service is fixed, does measured service stay fixed?</td></tr>
+          <tr><td>Apache DSP</td><td>Classic OS-process-per-request architecture</td><td>What happens when many processes compete on one pinned CPU?</td></tr>
+          <tr><td>Apache MSG</td><td>Shared file/message backend</td><td>Can hidden shared resources distort response-time CDFs?</td></tr>
+          <tr><td>Node DSP 1c</td><td>Single event loop server</td><td>How does an event-loop runtime compare to process/thread models?</td></tr>
+          <tr><td>Python DSP 1c</td><td>GIL/serial execution control case</td><td>Does serialised execution behave closer to M0?</td></tr>
+          <tr><td>Java DSP</td><td>JVM/thread-pool server</td><td>Does JVM warmup affect service-time measurements?</td></tr>
+          <tr><td>Go SQLite</td><td>Application plus database lock</td><td>Does a database-backed service still look like one queue?</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Server rationale</span><span>5</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Runtime Terms</div><h2>Some server behaviours need runtime vocabulary</h2></header>
+      <div class="content cards two-col">
+        <div class="card"><strong>GIL</strong><p>Python's Global Interpreter Lock allows only one thread to execute Python bytecode at a time. In the 1-worker case, this suppresses CPU competition.</p></div>
+        <div class="card"><strong>JIT</strong><p>Just-In-Time compilation lets the JVM compile hot code paths while the experiment runs, so early requests can be slower than later ones.</p></div>
+        <div class="card"><strong>WAL</strong><p>SQLite Write-Ahead Logging improves concurrency, but write/lock paths can still serialise internally and create a hidden queue.</p></div>
+        <div class="card"><strong>Tandem queue</strong><p>A request passes through two queues in sequence, e.g. application worker first, database lock second. A single M/G/c model cannot represent both stages.</p></div>
+      </div>
+      <footer class="footer"><span>Runtime vocabulary</span><span>6</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Docker Configuration Work</div><h2>The Docker setup had to enforce actual experimental control</h2></header>
+      <div class="content cards two-col">
+        <div class="card"><strong>CPU quota plus pinning</strong><p><code>cpus</code> limits share; <code>cpuset</code> pins cores. Both were needed so "1-core" actually meant one physical core.</p></div>
+        <div class="card"><strong>One service per load run</strong><p>Only one target server should run during measurement to avoid cross-container CPU contention.</p></div>
+        <div class="card"><strong>Bind-mounted logs</strong><p>Containers write per-request CSV traces into <code>data/live_logs/</code> for later analysis.</p></div>
+        <div class="card"><strong>Correct Apache mounts</strong><p>The Apache config must be mounted as a file, not accidentally created as a directory. This caused an earlier Docker startup error.</p></div>
+      </div>
+      <footer class="footer"><span>Docker config</span><span>6</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Step-By-Step Pipeline</div><h2>How each experiment flows through the repo</h2></header>
+      <div class="content">
+        <table>
+          <tr><th>Step</th><th>Folder / script</th><th>Output</th></tr>
+          <tr><td>1. Start container</td><td><code>docker-compose.yml</code>, <code>servers/</code></td><td>Target service running on a pinned port/core set</td></tr>
+          <tr><td>2. Generate load</td><td><code>analysis/load/</code>, <code>analysis/orchestration/run_sweeps.py</code></td><td>Poisson request stream at chosen rates</td></tr>
+          <tr><td>3. Collect traces</td><td><code>data/experiments/</code></td><td>Per-request arrival, service, queue, response, status</td></tr>
+          <tr><td>4. Run DES</td><td><code>analysis/des/</code></td><td>Simulated response traces and KS values</td></tr>
+          <tr><td>5. Plot/report</td><td><code>analysis/reporting/</code>, <code>results/</code></td><td>CDF overlays, fit plots, tables, README summaries</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Pipeline</span><span>7</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Data Collection</div><h2>Each load run produces a request-level trace</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <ul>
+            <li>The load generator sends requests at a fixed average rate using exponential inter-arrival times.</li>
+            <li>The server records service time inside the handler around the actual work.</li>
+            <li>The client/request path records response time.</li>
+            <li>Rejected or non-2xx requests are filtered for stable-model validation.</li>
+          </ul>
+        </div>
+        <div class="equation">arrival_unix_ns
+service_ms
+queue_ms
+response_ms
+status_code</div>
+      </div>
+      <footer class="footer"><span>Trace format</span><span>8</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Trace Interpretation</div><h2>The trace separates three timing quantities</h2></header>
+      <div class="content two">
+        <div class="equation">|--- queue_ms ---|--- service_ms ---|
+|----------- response_ms -----------|
+
+response_ms = queue_ms + service_ms</div>
+        <div>
+          <ul>
+            <li><strong>service_ms:</strong> measured server work interval.</li>
+            <li><strong>queue_ms:</strong> inferred waiting before service.</li>
+            <li><strong>response_ms:</strong> client-observed latency used for CDF validation.</li>
+            <li>The early mistake was measuring too much handler wall-clock time as service.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Timing data</span><span>9</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">DES Mechanics</div><h2>The DES replays arrivals through a queueing model</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <ul>
+            <li>Read the observed arrival sequence from the trace.</li>
+            <li>Keep a list/heap of worker availability times.</li>
+            <li>For each request, assign it to the next available worker.</li>
+            <li>If the worker is busy, the difference becomes simulated queue time.</li>
+            <li>Sample or replay service time, then record simulated response time.</li>
+          </ul>
+        </div>
+        <div class="equation">start_i  = max(arrival_i, worker_free_at)
+finish_i = start_i + service_i
+resp_i   = finish_i - arrival_i</div>
+      </div>
+      <footer class="footer"><span>DES algorithm</span><span>10</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">DES Modes</div><h2>Different service-time modes test different assumptions</h2></header>
+      <div class="content">
+        <table>
+          <tr><th>Mode</th><th>Service-time source</th><th>What it diagnoses</th></tr>
+          <tr><td>Replay</td><td>Observed values reused from the trace</td><td>Whether the queueing structure is right</td></tr>
+          <tr><td>Bootstrap</td><td>Random resample from observed service times</td><td>Sensitivity to sample variance</td></tr>
+          <tr><td>Parametric</td><td>Sample from fitted lognormal/gamma/weibull</td><td>Whether the distribution family is adequate</td></tr>
+          <tr><td>M0/M1/M2/M3</td><td>Service mean set by fitted load model</td><td>Whether load-dependent service improves response CDFs</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>DES modes</span><span>11</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Code Audit</div><h2>The main safeguards and model tests are anchored in the repo</h2></header>
+      <div class="content">
+        <table class="tiny">
+          <tr><th>Concern</th><th>Code anchor</th><th>Why it matters</th></tr>
+          <tr><td>Correct timing stamps</td><td><code>servers/apache_dsp_aes/index.php:3,165,217</code>; <code>servers/node_dsp_aes/server.js:133,160-187</code></td><td>Separates request start from workload start/end, avoiding the early handler-time mistake.</td></tr>
+          <tr><td>Safe trace writing</td><td><code>servers/apache_dsp_aes/index.php:44-57</code>; <code>servers/python_dsp_aes/app.py:83-98</code></td><td>CSV rows are written consistently; worker races do not corrupt logs.</td></tr>
+          <tr><td>Docker controls</td><td><code>docker-compose.yml:56-68</code>; <code>docker-compose.yml:181-182</code></td><td>Apache mounts are explicit, and 1c/3c runs use CPU pinning plus quota.</td></tr>
+          <tr><td>Trace schema and replay</td><td><code>analysis/orchestration/run_sweeps.py:83,131</code>; <code>analysis/des/single_server_des.py:202-212</code></td><td>Runs produce normalised traces, copy them into experiment folders, sort arrivals, and filter non-2xx rows.</td></tr>
+          <tr><td>DES response calculation</td><td><code>analysis/des/single_server_des.py:272-311</code>; <code>analysis/des/multi_server_des.py:250-277</code></td><td>Simulates FCFS start, finish, queue time, and response time from observed arrivals.</td></tr>
+          <tr><td>Model/statistical tests</td><td><code>analysis/des/fit_service_time.py:54-136</code>; <code>analysis/des/des_m0_m1_m2_compare.py:220-320</code>; <code>analysis/des/anova_service_time.py:8-114</code></td><td>Fits service-time models, compares response CDFs by KS, and tests service-time dependence by arrival rate.</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Code references</span><span>12</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Validation Metric</div><h2>CDF overlays and KS distance decide whether the model works</h2></header>
+      <div class="content two">
+        <div>
+          <ul>
+            <li>The measured response-time CDF is the reference.</li>
+            <li>Each DES run produces a simulated response-time CDF.</li>
+            <li>KS distance is the maximum vertical gap between the two CDFs.</li>
+            <li>Large KS means either the service distribution or the queueing structure is wrong.</li>
+          </ul>
+        </div>
+        <div class="equation">KS = max_x | F_ref(x) - F_sim(x) |</div>
+      </div>
+      <footer class="footer"><span>CDF / KS</span><span>12</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Docker Lessons</div><h2>Several "small" setup problems became research lessons</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Wrong Apache route</strong><p>HTTP 200 was not enough; the server returned a default page instead of executing the workload.</p></div>
+        <div class="card"><strong>Service vs handler time</strong><p>Instrumentation initially measured too much of the HTTP path as service time.</p></div>
+        <div class="card"><strong>CSV write races</strong><p>Apache workers corrupted shared CSV logs until writes were protected with locking.</p></div>
+        <div class="card"><strong>Go rejections</strong><p>Rejected 503 requests had to be filtered or saturation looked artificially fast.</p></div>
+        <div class="card"><strong>Java warmup</strong><p>JIT compilation created a decreasing service-time artefact.</p></div>
+        <div class="card"><strong>Node cluster</strong><p>Three workers were not one shared M/G/3 queue; routing creates split queues.</p></div>
+      </div>
+      <footer class="footer"><span>Lessons</span><span>8</span></footer>
     </section>
 
     <section class="slide">
@@ -353,7 +730,20 @@ rho = lambda * E[S] / c</div>
     </section>
 
     <section class="slide">
-      <header><div class="kicker">Pivot</div><h2>The original ML plan became unnecessary for service-time modelling</h2></header>
+      <header><div class="kicker">Baseline First</div><h2>The first modelling step was standard M/G/1 and M/G/c validation</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Assume fixed service distribution</strong><p>The standard model treats service times as independent of arrival rate.</p></div>
+        <div class="card"><strong>Use observed arrivals</strong><p>Replay mode removes arrival-process error by using the actual trace arrival sequence.</p></div>
+        <div class="card"><strong>Compare response CDFs</strong><p>If the CDFs match, the queueing abstraction is probably adequate.</p></div>
+        <div class="card"><strong>Inspect high KS cases</strong><p>If the CDFs do not match, the failure points to a hidden queue, wrong worker structure, or changing service time.</p></div>
+        <div class="card"><strong>Only then fit load models</strong><p>The load-dependent service model was introduced after baseline mismatch appeared in real traces.</p></div>
+        <div class="card"><strong>No shortcut</strong><p>The discovery came from debugging failed M/G/c predictions, not assuming load dependence at the start.</p></div>
+      </div>
+      <footer class="footer"><span>Baseline DES</span><span>13</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Pivot</div><h2>The ML pivot happened after the baseline model exposed a simpler pattern</h2></header>
       <div class="content two">
         <div class="card">
           <h3>Original Thesis A plan</h3>
@@ -365,6 +755,48 @@ rho = lambda * E[S] / c</div>
         </div>
       </div>
       <footer class="footer"><span>Pivot</span><span>6</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Original ML Plan</div><h2>The plan was to learn service-time distributions from Docker traces</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <ul>
+            <li>Use KDE/GMM/regressors to learn empirical service-time distributions.</li>
+            <li>Feed learned distributions into DES.</li>
+            <li>Use ARIMA/LSTM-style forecasting to predict future arrival rates.</li>
+            <li>Compare ML-only, queueing-only, and hybrid ML-DES approaches.</li>
+          </ul>
+        </div>
+        <div class="callout">This was a reasonable plan before the service-time anomaly became visible.</div>
+      </div>
+      <footer class="footer"><span>Original ML plan</span><span>9</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Why The Plan Changed</div><h2>The data did not need a black-box service-time learner</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>Shape was stable</strong><p>Many service-time distributions remained roughly lognormal/right-skewed.</p></div>
+        <div class="card"><strong>Mean moved with load</strong><p>The dominant effect was not arbitrary distribution shape; it was mean inflation.</p></div>
+        <div class="card"><strong>One variable mattered</strong><p>Nominal utilisation <code>rho0</code> explained much of the change.</p></div>
+        <div class="card"><strong>Mechanism existed</strong><p>OS/runtime scheduling gave a physical explanation for wall-clock inflation.</p></div>
+        <div class="card"><strong>Less ML, more insight</strong><p>A two-parameter model was more interpretable than KDE/GMM black-box fitting.</p></div>
+        <div class="card"><strong>ML still has a role</strong><p>Forecasting future arrival rate remains an ML/time-series problem.</p></div>
+      </div>
+      <footer class="footer"><span>Pivot reason</span><span>10</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Revised Architecture</div><h2>The useful hybrid system shifted from service-time ML to proactive forecasting</h2></header>
+      <div class="content center">
+        <div class="equation">Prometheus / traces
+      -> forecast lambda(t + delta)
+      -> load-dependent DES using S0, beta/theta, CV, c
+      -> predicted response CDF / SLO risk
+      -> scale before the queue builds</div>
+        <p class="subtitle">This is the industrial scaling story: feedforward autoscaling instead of reactive threshold scaling.</p>
+      </div>
+      <footer class="footer"><span>Revised architecture</span><span>11</span></footer>
     </section>
 
     <section class="slide">
@@ -387,7 +819,11 @@ rho = lambda * E[S] / c</div>
             <li>This gives Processor-Sharing-like behaviour without claiming the application is literally M/M/1-PS.</li>
           </ul>
         </div>
-        <div class="equation">E[S](rho0) = S0 / (1 - beta*rho0)
+        <div class="equation">Old M2:
+E[S](rho0) = S0 / (1 - beta*rho0)
+
+Exploratory M3 candidate:
+E[S](rho0) = S0 * (1 + theta*rho0/(1-rho0))
 
 rho0 = lambda*S0/c</div>
       </div>
@@ -395,17 +831,55 @@ rho0 = lambda*S0/c</div>
     </section>
 
     <section class="slide">
-      <header><div class="kicker">Models</div><h2>M0, M1, and M2 are three service-time hypotheses</h2></header>
+      <header><div class="kicker">Models</div><h2>The model family now separates fit from interpretation</h2></header>
       <div class="content">
         <table>
           <tr><th>Model</th><th>Formula</th><th>Meaning</th></tr>
           <tr><td>M0</td><td><code>E[S] = S0</code></td><td>Classical constant service time</td></tr>
           <tr><td>M1</td><td><code>E[S] = S0 + alpha*rho0</code></td><td>Linear empirical growth</td></tr>
-          <tr><td>M2</td><td><code>E[S] = S0 / (1 - beta*rho0)</code></td><td>Hyperbolic PS-motivated growth</td></tr>
+          <tr><td>M2</td><td><code>E[S] = S0 / (1 - beta*rho0)</code></td><td>Original hyperbolic PS-motivated fit</td></tr>
+          <tr><td>M3</td><td><code>E[S] = S0*(1 + theta*rho0/(1-rho0))</code></td><td>Base work plus CPU-contention penalty</td></tr>
         </table>
-        <p class="caption">The thesis claim is not that M2 always wins. The claim is that M0 fails in important workloads, and M2 gives a mechanistic correction.</p>
+        <p class="caption">M3 avoids claiming there is literally a Processor-Sharing queue inside FCFS. It is a reduced-form contention correction.</p>
       </div>
-      <footer class="footer"><span>M0/M1/M2</span><span>9</span></footer>
+      <footer class="footer"><span>M0/M1/M2/M3</span><span>9</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Model Stress Test</div><h2>The contention-penalty model stands, but does not dominate</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <ul>
+            <li>Service-time fit: M3 is almost tied with M2 for the strong 1-core CPU cases.</li>
+            <li>DES response CDFs: average KS was <code>M2=0.4940</code>, <code>M3=0.4955</code>.</li>
+            <li>M3 wins some cases, e.g. Python DSP 3c at 200 rps.</li>
+            <li>Best conclusion: M3 is a more realistic interpretation, while M2 remains marginally stronger overall by KS.</li>
+          </ul>
+        </div>
+        <div class="equation">M2 interpretation:
+PS-shaped fitted slowdown
+
+M3 interpretation:
+base service work
++ scheduler contention penalty</div>
+      </div>
+      <footer class="footer"><span>Alternative equation</span><span>10</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Priority Models Tried</div><h2>Explicit priority structures were tested as alternatives</h2></header>
+      <div class="content two wide-left">
+        <div>
+          <ul>
+            <li><strong>Preemptive-resume M/G/1:</strong> DSP jobs are low priority; synthetic short high-priority jobs can interrupt and DSP resumes later.</li>
+            <li><strong>Feedback priority:</strong> each DSP job receives a high-priority first quantum, then unfinished work returns to a lower-priority queue.</li>
+            <li>These models improved over plain FCFS_M0 in some traces.</li>
+            <li>They did not beat M2 overall: average KS was <code>M2=0.3727</code>, <code>preempt=0.4054</code>, <code>feedback=0.4215</code>.</li>
+          </ul>
+        </div>
+        <div class="figure"><img src="../../results/figures/des_priority_exploratory_cdf.png" alt="Priority exploratory CDF"></div>
+      </div>
+      <footer class="footer"><span>Priority validation</span><span>11</span></footer>
     </section>
 
     <section class="slide">
@@ -434,13 +908,14 @@ rho0 = lambda*S0/c</div>
           <ul>
             <li>Fit quality alone is not enough.</li>
             <li>The DES must compare response-time CDFs.</li>
-            <li>The key comparison is CDF_REF vs CDF_M0, CDF_M1, and CDF_M2.</li>
+            <li>The key comparison is CDF_REF vs simulated CDFs under constant, linear, and load-dependent service assumptions.</li>
           </ul>
         </div>
         <div class="equation">CDF_REF = measured response times
 CDF_M0  = DES with constant S0
 CDF_M1  = DES with linear E[S]
-CDF_M2  = DES with hyperbolic E[S]</div>
+CDF_M2  = DES with hyperbolic E[S]
+CDF_M3  = exploratory contention penalty</div>
       </div>
       <footer class="footer"><span>Validation logic</span><span>11</span></footer>
     </section>
@@ -470,6 +945,7 @@ CDF_M2  = DES with hyperbolic E[S]</div>
             <li>M2 is not best everywhere.</li>
             <li>M1 can approximate finite-range service-time growth.</li>
             <li>M2 matters because it is mechanistic and has saturation behaviour.</li>
+            <li>M3 is an exploratory reformulation that keeps the contention story without claiming a literal PS queue.</li>
           </ul>
         </div>
       </div>
@@ -528,13 +1004,77 @@ H1: log(service_ms) depends on rate</div>
     </section>
 
     <section class="slide">
-      <header><div class="kicker">Structural Findings</div><h2>Not every mismatch is solved by changing service time</h2></header>
+      <header><div class="kicker">Structural Findings</div><h2>How the non-service-time mismatches were diagnosed</h2></header>
       <div class="content cards">
-        <div class="card"><strong>Node.js cluster</strong><p>Not a shared M/G/3 queue. It is closer to 3 independent M/G/1 queues with splitting.</p></div>
-        <div class="card"><strong>Go SQLite</strong><p>Application queue feeds a hidden SQLite/WAL lock queue: a tandem system.</p></div>
-        <div class="card"><strong>Java DSP</strong><p>JIT warmup changes service time for runtime reasons, not queueing reasons.</p></div>
+        <div class="card"><strong>Node.js cluster</strong><p><b>Observed:</b> M/G/3 DES stayed high-KS even after using c=3 and fitted service times.<br><b>Reason:</b> Node cluster routes requests into separate worker event loops, so arrivals are split across 3 M/G/1 queues rather than sharing one queue.</p></div>
+        <div class="card"><strong>Go SQLite</strong><p><b>Observed:</b> Service mean was not enough to explain heavy tails and irregular CDF mismatch.<br><b>Reason:</b> requests wait first for the Go worker, then again inside SQLite/WAL locks, so the path is a two-stage tandem queue.</p></div>
+        <div class="card"><strong>Java DSP</strong><p><b>Observed:</b> service time decreased after early requests instead of increasing with load.<br><b>Reason:</b> JIT compiles hot code paths during warmup, so later requests run faster. That is a runtime phase change, not queue growth.</p></div>
       </div>
       <footer class="footer"><span>Model boundaries</span><span>17</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">How Conclusions Were Reached</div><h2>Each architecture conclusion came from a specific diagnostic pattern</h2></header>
+      <div class="content tiny">
+        <table>
+          <tr><th>Case</th><th>Evidence observed</th><th>Conclusion</th></tr>
+          <tr><td>Apache DSP</td><td>Mean service time rises strongly; histograms gain heavy right tails; M2 beats M0 in CDF</td><td>CPU time-sharing between OS processes inflates wall-clock service</td></tr>
+          <tr><td>Go lognormal</td><td>Programmed service distribution is fixed but measured wall-clock service shifts with load</td><td>Runtime scheduling delays are inside the measured service interval</td></tr>
+          <tr><td>Python 1c</td><td>Mean service time nearly flat; small ANOVA effect size; GIL serialises Python execution</td><td>Useful constant-service control case</td></tr>
+          <tr><td>Java DSP</td><td>Service time can decrease after early requests; behaviour follows warmup rather than queue growth</td><td>JIT phase change, not load-dependent queueing</td></tr>
+          <tr><td>Node 3c</td><td>High KS remains even with correct worker count</td><td>Architecture is split queues, not shared M/G/3</td></tr>
+          <tr><td>Go SQLite</td><td>Single-stage DES cannot explain tails; database lock/WAL path is hidden from app queue</td><td>Needs tandem queue model</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Inference</span><span>18</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Tandem Queue Thinking</div><h2>Go SQLite suggests two queues in sequence, not one bigger queue</h2></header>
+      <div class="content two">
+        <div class="equation">request
+  -> application worker queue
+  -> SQLite / WAL lock queue
+  -> response</div>
+        <div>
+          <ul>
+            <li>A single M/G/c model only sees one waiting room and one service stage.</li>
+            <li>SQLite can add another internal waiting point through locks and disk/cache behaviour.</li>
+            <li>End-to-end response time is shaped by both stages.</li>
+            <li>This is why parameter tuning alone cannot fix Go SQLite.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Tandem queue</span><span>19</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">What Each Architecture Revealed</div><h2>The server catalogue became a diagnostic tool</h2></header>
+      <div class="content tiny">
+        <table>
+          <tr><th>Architecture</th><th>Observation</th><th>Model implication</th></tr>
+          <tr><td>Apache prefork</td><td>Large service-time inflation with load</td><td>M0 fails; PS-like M2 is useful</td></tr>
+          <tr><td>Python 1c / GIL</td><td>Service time nearly constant</td><td>Good M0 control case</td></tr>
+          <tr><td>Python 3c</td><td>Small but meaningful service-time growth</td><td>M2 can improve response CDF at higher rates</td></tr>
+          <tr><td>Go lognormal</td><td>Programmed workload still inflates in wall-clock time</td><td>Runtime scheduling matters</td></tr>
+          <tr><td>Node cluster</td><td>High KS persists despite worker count</td><td>Shared M/G/3 is wrong abstraction</td></tr>
+          <tr><td>Go SQLite</td><td>Single-stage queue cannot explain all tails</td><td>Tandem queue / WAL lock model needed</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Architecture findings</span><span>18</span></footer>
+    </section>
+
+    <section class="slide">
+      <header><div class="kicker">Research Logic</div><h2>The final evidence chain is deliberately layered</h2></header>
+      <div class="content cards">
+        <div class="card"><strong>1. Experimental</strong><p>Per-request service-time traces show rate-dependent shifts.</p></div>
+        <div class="card"><strong>2. Visual</strong><p>Service-time histograms show centre/tail movement with arrival rate.</p></div>
+        <div class="card"><strong>3. Simulation</strong><p>CDF_M2 improves over CDF_M0 in key response-time cases.</p></div>
+        <div class="card"><strong>4. Statistical</strong><p>ANOVA on log(service_ms) rejects independence for affected workloads.</p></div>
+        <div class="card"><strong>5. Mechanistic</strong><p>OS/runtime scheduling explains why wall-clock service time inflates.</p></div>
+        <div class="card"><strong>6. Boundary cases</strong><p>Java, Node cluster, and SQLite clarify where the model does not apply.</p></div>
+      </div>
+      <footer class="footer"><span>Evidence chain</span><span>19</span></footer>
     </section>
 
     <section class="slide">
@@ -575,9 +1115,148 @@ H1: log(service_ms) depends on rate</div>
   <div class="progress" id="progress"></div>
 
   <script>
+    const deckStorageKey = "capacity_lab_thesis_b_slide_dom_v3";
+    const savedDeckHtml = localStorage.getItem(deckStorageKey);
+    if (savedDeckHtml) document.querySelector(".deck").innerHTML = savedDeckHtml;
+
     const slides = Array.from(document.querySelectorAll(".slide"));
     const progress = document.getElementById("progress");
+    const editToggle = document.getElementById("editToggle");
+    const addBox = document.getElementById("addBox");
+    const deleteBox = document.getElementById("deleteBox");
+    const saveEdits = document.getElementById("saveEdits");
+    const resetEdits = document.getElementById("resetEdits");
+    const downloadDeck = document.getElementById("downloadDeck");
+    const editableSelector = "h1,h2,h3,p,li,td,th,strong,.equation,.kicker,.caption,.subtitle,.big-quote,.callout";
+    const storageKey = "capacity_lab_thesis_b_slide_edits_v3";
+    const editableNodes = Array.from(document.querySelectorAll(editableSelector))
+      .filter((node) => !node.closest(".toolbar"));
     let index = 0;
+    let editing = false;
+    let selectedItem = null;
+    let dragState = null;
+
+    function markMovables(root = document) {
+      root.querySelectorAll(".card,.equation,.figure,.callout,.freebox").forEach((node) => {
+        node.classList.add("movable");
+      });
+    }
+
+    function refreshEditableNodes(root = document) {
+      const nodes = Array.from(root.querySelectorAll(editableSelector))
+        .filter((node) => !node.closest(".toolbar"));
+      nodes.forEach((node, idx) => {
+        if (!node.dataset.editId) node.dataset.editId = `edit-${Date.now()}-${idx}`;
+        node.contentEditable = editing ? "true" : "false";
+      });
+    }
+
+    editableNodes.forEach((node, idx) => {
+      node.dataset.editId = `edit-${idx}`;
+    });
+    markMovables();
+
+    function savedMap() {
+      try {
+        return JSON.parse(localStorage.getItem(storageKey) || "{}");
+      } catch {
+        return {};
+      }
+    }
+
+    function loadEdits() {
+      const edits = savedMap();
+      editableNodes.forEach((node) => {
+        if (Object.prototype.hasOwnProperty.call(edits, node.dataset.editId)) {
+          node.innerHTML = edits[node.dataset.editId];
+        }
+      });
+    }
+
+    function persistEdits() {
+      const edits = {};
+      document.querySelectorAll("[data-edit-id]").forEach((node) => {
+        edits[node.dataset.editId] = node.innerHTML;
+      });
+      localStorage.setItem(storageKey, JSON.stringify(edits));
+      localStorage.setItem(deckStorageKey, document.querySelector(".deck").innerHTML);
+    }
+
+    function setEditing(value) {
+      editing = value;
+      document.body.classList.toggle("editing", editing);
+      editToggle.classList.toggle("active", editing);
+      editToggle.textContent = editing ? "Editing" : "Edit";
+      document.querySelectorAll("[data-edit-id]").forEach((node) => {
+        node.contentEditable = editing ? "true" : "false";
+      });
+    }
+
+    function selectItem(node) {
+      if (selectedItem) selectedItem.classList.remove("selected");
+      selectedItem = node && node.closest(".movable");
+      if (selectedItem) selectedItem.classList.add("selected");
+    }
+
+    function activeSlide() {
+      return slides[index];
+    }
+
+    function addTextBox() {
+      const box = document.createElement("div");
+      box.className = "freebox movable";
+      box.dataset.editId = `free-${Date.now()}`;
+      box.contentEditable = editing ? "true" : "false";
+      box.innerHTML = "New editable text";
+      const slide = activeSlide();
+      slide.appendChild(box);
+      selectItem(box);
+      box.focus();
+    }
+
+    function deleteSelected() {
+      if (!selectedItem) return;
+      if (!confirm("Delete the selected item from this deck?")) return;
+      const removed = selectedItem;
+      selectedItem = null;
+      removed.remove();
+    }
+
+    function beginDrag(event) {
+      if (!editing || !event.shiftKey) return;
+      const target = event.target.closest(".movable");
+      if (!target || target.closest(".toolbar")) return;
+      event.preventDefault();
+      selectItem(target);
+      const rect = target.getBoundingClientRect();
+      const slideRect = target.closest(".slide").getBoundingClientRect();
+      target.classList.add("dragging");
+      target.style.position = "absolute";
+      target.style.left = `${rect.left - slideRect.left}px`;
+      target.style.top = `${rect.top - slideRect.top}px`;
+      target.style.width = `${rect.width}px`;
+      target.style.margin = "0";
+      dragState = {
+        node: target,
+        slideRect,
+        dx: event.clientX - rect.left,
+        dy: event.clientY - rect.top
+      };
+    }
+
+    function moveDrag(event) {
+      if (!dragState) return;
+      const x = event.clientX - dragState.slideRect.left - dragState.dx;
+      const y = event.clientY - dragState.slideRect.top - dragState.dy;
+      dragState.node.style.left = `${Math.max(0, x)}px`;
+      dragState.node.style.top = `${Math.max(0, y)}px`;
+    }
+
+    function endDrag() {
+      if (!dragState) return;
+      dragState.node.classList.remove("dragging");
+      dragState = null;
+    }
 
     function show(i) {
       index = Math.max(0, Math.min(slides.length - 1, i));
@@ -586,6 +1265,11 @@ H1: log(service_ms) depends on rate</div>
       history.replaceState(null, "", `#${index + 1}`);
     }
 
+    slides.forEach((slide, idx) => {
+      const footerNumber = slide.querySelector(".footer span:last-child");
+      if (footerNumber) footerNumber.textContent = `${idx + 1}/${slides.length}`;
+    });
+
     function fromHash() {
       const n = Number(location.hash.replace("#", ""));
       if (Number.isFinite(n) && n >= 1) show(n - 1);
@@ -593,12 +1277,60 @@ H1: log(service_ms) depends on rate</div>
 
     window.addEventListener("hashchange", fromHash);
     document.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        persistEdits();
+        return;
+      }
+      if (event.key.toLowerCase() === "e" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (!document.activeElement || document.activeElement.contentEditable !== "true") {
+          setEditing(!editing);
+          return;
+        }
+      }
+      if (editing && document.activeElement && document.activeElement.contentEditable === "true") return;
       if (["ArrowRight", "PageDown", " "].includes(event.key)) show(index + 1);
       if (["ArrowLeft", "PageUp", "Backspace"].includes(event.key)) show(index - 1);
       if (event.key === "Home") show(0);
       if (event.key === "End") show(slides.length - 1);
     });
-    document.addEventListener("click", () => show(index + 1));
+    document.addEventListener("click", (event) => {
+      if (editing || event.target.closest(".toolbar")) return;
+      show(index + 1);
+    });
+    editToggle.addEventListener("click", () => setEditing(!editing));
+    addBox.addEventListener("click", addTextBox);
+    deleteBox.addEventListener("click", deleteSelected);
+    saveEdits.addEventListener("click", persistEdits);
+    resetEdits.addEventListener("click", () => {
+      if (confirm("Clear saved edits for this browser? Reloading restores the original file text.")) {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(deckStorageKey);
+        location.reload();
+      }
+    });
+    document.addEventListener("mousedown", (event) => {
+      if (editing && event.target.closest(".movable") && !event.target.closest(".toolbar")) {
+        selectItem(event.target);
+      }
+      beginDrag(event);
+    });
+    document.addEventListener("mousemove", moveDrag);
+    document.addEventListener("mouseup", endDrag);
+    downloadDeck.addEventListener("click", () => {
+      persistEdits();
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelectorAll("[contenteditable]").forEach((node) => node.removeAttribute("contenteditable"));
+      const html = "<!doctype html>\n" + clone.outerHTML;
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "thesis_b_slides_edited.html";
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+    loadEdits();
     fromHash();
     show(index);
   </script>

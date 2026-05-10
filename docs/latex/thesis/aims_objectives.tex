@@ -1,0 +1,61 @@
+\chapter{Aims, Objectives, and Research Questions}
+\label{ch:aims}
+
+This chapter states the purpose of the thesis in its final form. The project began as a Docker-based teaching artefact and evolved into a research investigation of service-time load dependence in containerised microservices. The aims and objectives below reflect both roles.
+
+\section{Overall Aim}
+
+The overall aim is to develop and validate a reproducible capacity-modelling framework for Dockerised request-response services, capable of showing when classical M/G/1 and M/G/$c$ assumptions hold, when they fail, and what modelling correction is needed when measured service time changes with load.
+
+The framework is intended to serve two audiences:
+
+\begin{itemize}
+    \item \textbf{Teaching}: COMP9334 students should be able to observe queueing theory, saturation, response-time CDFs, and DES validation using real services on a personal machine.
+    \item \textbf{Research and capacity planning}: performance engineers should be able to use request-level traces to diagnose whether a microservice is approximately constant-service, load-dependent, structurally mismatched, or affected by runtime artefacts.
+\end{itemize}
+
+\section{Research Questions}
+
+The thesis is organised around five research questions.
+
+\begin{description}
+    \item[RQ1.] Can a lightweight Docker platform generate reproducible request-level traces suitable for queueing and DES validation?
+    \item[RQ2.] When do standard M/G/1 and M/G/$c$ models accurately predict measured response-time distributions for containerised services?
+    \item[RQ3.] Do CPU-bound containerised services preserve the constant-service-time assumption as arrival rate and utilisation increase?
+    \item[RQ4.] If service time is load-dependent, does a fitted service-time model improve DES response-time CDFs relative to the constant-service baseline?
+    \item[RQ5.] Are richer explicit scheduling models, such as priority/preemptive-resume or feedback queues, supported by the current traces, or do they require new experiments?
+\end{description}
+
+\section{Objectives}
+
+To answer these questions, the thesis pursues the following concrete objectives.
+
+\begin{enumerate}
+    \item Build a Docker Compose platform containing multiple server implementations across different runtimes, workloads, and concurrency models.
+    \item Implement open-loop Poisson load generation and standardise the trace format to include \texttt{arrival\_unix\_ns}, \texttt{service\_ms}, \texttt{queue\_ms}, \texttt{response\_ms}, and \texttt{status\_code}.
+    \item Implement trace-driven M/G/1 and M/G/$c$ DES models using replayed arrival times, lognormal service-time sampling, and response-CDF validation.
+    \item Fit and compare M0, M1, and M2 service-time models, using AIC and response-CDF KS distance to determine whether service-time modelling improves response-time prediction.
+    \item Inspect service-time distributions using histograms and test service-time independence from arrival rate using ANOVA on $\log(\texttt{service\_ms})$.
+    \item Identify structural mismatch cases where a single shared M/G/$c$ queue is not the correct abstraction, including Node.js cluster and Go SQLite.
+    \item Implement exploratory M3, priority/preemptive-resume, and feedback-priority models to test whether the load-dependent finding can be replaced or strengthened by an explicit scheduling interpretation.
+    \item Document the full research process, including failed assumptions and debugging discoveries, so that the final model is presented as an empirical discovery rather than as a post-hoc curve fit.
+\end{enumerate}
+
+\section{Scope}
+
+The thesis focuses on single-machine Docker experiments under controlled load. It does not claim production-scale validation, Kubernetes deployment, or cloud-native autoscaling. The results are therefore strongest as empirical evidence for the existence and diagnosis of load-dependent service time in controlled containerised services.
+
+The thesis also distinguishes between completed work and future work. M/G/1, M/G/$c$, M0/M1/M2, M3, ANOVA, and exploratory priority/feedback validation are implemented and evaluated. Fixed-point forecasting, arrival-rate prediction, real two-class priority experiments, tandem-queue modelling for SQLite, and cloud/native-Linux validation remain future-work directions beyond the current submission.
+
+\section{Claim Boundaries}
+
+The core claim is not that one model is universally best. The evidence instead supports a diagnostic workflow:
+
+\begin{enumerate}
+    \item If replay DES fits well, the queueing structure is likely adequate.
+    \item If M0 fails but M2 improves the response CDF, service time is likely load-dependent.
+    \item If all one-stage models fail, the server may contain a structural mismatch such as split queues, tandem queues, runtime warmup, or hidden locks.
+    \item If explicit priority or feedback models are desired, the experiment must log real priority classes or feedback visits; they should not be inferred from one-class traces alone.
+\end{enumerate}
+
+This boundary is important for thesis-level defensibility. The work contributes a tested method for finding model violations, not a universal replacement for queueing theory.

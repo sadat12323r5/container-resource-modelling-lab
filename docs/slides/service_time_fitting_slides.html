@@ -1,0 +1,880 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service-Time Fitting - Thesis C Focus Deck</title>
+  <style>
+    :root {
+      --bg: #101418;
+      --panel: #171d23;
+      --ink: #f4f7fb;
+      --muted: #a8bad0;
+      --accent: #2fb6a3;
+      --accent2: #f2c14e;
+      --line: #2b3642;
+      --bad: #ef6f6c;
+      --good: #7bd88f;
+      --blue: #8ab4f8;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); overflow: hidden; }
+    .deck, .slide { width: 100vw; height: 100vh; }
+    .slide {
+      display: none;
+      padding: 48px 64px 44px;
+      position: relative;
+      background:
+        linear-gradient(90deg, rgba(47, 182, 163, 0.10), transparent 38%),
+        radial-gradient(circle at 88% 12%, rgba(138, 180, 248, 0.12), transparent 30%),
+        var(--bg);
+    }
+    .slide.active {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 24px;
+    }
+    .slide.compact {
+      padding: 34px 56px 34px;
+    }
+    .slide.compact.active {
+      gap: 14px;
+    }
+    .slide.compact h2 {
+      font-size: 34px;
+      line-height: 1.08;
+      max-width: 1260px;
+    }
+    .slide.compact .content {
+      justify-content: start;
+      gap: 14px;
+    }
+    .slide.compact table {
+      table-layout: fixed;
+    }
+    .slide.compact th,
+    .slide.compact td {
+      font-size: 18px;
+      line-height: 1.2;
+      padding: 10px 12px;
+    }
+    .slide.compact .caption,
+    .slide.compact .callout p {
+      font-size: 18px;
+      line-height: 1.25;
+    }
+    .kicker {
+      color: var(--accent);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 58px; line-height: 1.04; max-width: 1180px; }
+    h2 { font-size: 42px; line-height: 1.12; max-width: 1180px; }
+    h3 { font-size: 26px; margin-bottom: 12px; }
+    p, li, td, th { font-size: 23px; line-height: 1.34; }
+    ul { margin: 0; padding-left: 28px; }
+    li { margin: 12px 0; color: var(--muted); }
+    strong { color: var(--ink); }
+    code, .mono {
+      font-family: Consolas, "Courier New", monospace;
+      color: #f8f2d8;
+    }
+    .subtitle {
+      font-size: 30px;
+      color: var(--muted);
+      max-width: 1000px;
+      line-height: 1.3;
+      margin-top: 24px;
+    }
+    .content {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 22px;
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; align-items: stretch; }
+    .card, .callout, .equation, .figure {
+      border: 1px solid var(--line);
+      background: rgba(23, 29, 35, 0.92);
+      border-radius: 8px;
+      padding: 24px;
+      overflow: hidden;
+    }
+    .card p, .callout p { color: var(--muted); }
+    .equation {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 32px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      color: #fff8dd;
+    }
+    .figure { padding: 12px; }
+    .figure img {
+      width: 100%;
+      height: 100%;
+      max-height: 540px;
+      object-fit: contain;
+      display: block;
+      background: #fff;
+      border-radius: 4px;
+    }
+    .caption {
+      color: var(--muted);
+      font-size: 19px;
+      margin-top: 10px;
+      text-align: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: rgba(23, 29, 35, 0.74);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--ink); font-weight: 800; }
+    td { color: var(--muted); }
+    tr:last-child td { border-bottom: 0; }
+    .good { color: var(--good); font-weight: 800; }
+    .bad { color: var(--bad); font-weight: 800; }
+    .accent { color: var(--accent2); font-weight: 800; }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      color: #84a0bd;
+      font-size: 18px;
+      border-top: 1px solid rgba(132, 160, 189, 0.2);
+      padding-top: 14px;
+    }
+    .progress {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      height: 5px;
+      width: 0;
+      background: var(--accent);
+      z-index: 8;
+    }
+    .toolbar {
+      position: fixed;
+      right: 16px;
+      top: 12px;
+      z-index: 20;
+      display: flex;
+      gap: 8px;
+      opacity: 0.25;
+      transition: opacity 140ms ease;
+    }
+    .toolbar:hover, body.editing .toolbar { opacity: 1; }
+    .toolbar button {
+      border: 1px solid var(--line);
+      background: #19212a;
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .toolbar button.active {
+      background: var(--accent);
+      color: #06110f;
+      border-color: var(--accent);
+    }
+    body.editing [contenteditable="true"] {
+      outline: 1px dashed rgba(47, 182, 163, 0.8);
+      outline-offset: 4px;
+      cursor: text;
+    }
+    .movable.selected {
+      outline: 2px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    .movable.dragging { opacity: 0.86; }
+    .freebox {
+      position: absolute;
+      left: 96px;
+      top: 160px;
+      width: 420px;
+      min-height: 90px;
+      border: 1px dashed var(--accent);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(23, 29, 35, 0.96);
+      color: var(--ink);
+      font-size: 24px;
+      z-index: 12;
+    }
+    @media print {
+      body { overflow: visible; }
+      .toolbar, .progress { display: none; }
+      .slide {
+        display: grid !important;
+        page-break-after: always;
+        width: 100vw;
+        height: 100vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar" aria-label="Slide editing controls">
+    <button id="editToggle">Edit</button>
+    <button id="addBox">Add Text</button>
+    <button id="deleteBox">Delete</button>
+    <button id="saveEdits">Save</button>
+    <button id="downloadDeck">Download HTML</button>
+    <button id="resetEdits">Reset</button>
+  </div>
+
+  <main class="deck">
+    <section class="slide active">
+      <header>
+        <div class="kicker">Service-Time Fitting</div>
+        <h1>Testing whether service time is really constant under load</h1>
+        <p class="subtitle">A focused math/statistics story: model assumptions, fitted service-time curves, response-CDF validation, histograms, ANOVA, and mechanistic interpretation.</p>
+      </header>
+      <div class="content">
+        <div class="callout"><p><strong>Core question:</strong> does changing the service-time model improve the simulated response-time distribution, or does it only make a nicer service-time plot?</p></div>
+      </div>
+      <footer class="footer"><span>Focused deck</span><span>1</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Starting Point</div>
+        <h2>The classical M/G/c assumption treats service time as exogenous</h2>
+      </header>
+      <div class="content grid2">
+        <div class="card">
+          <h3>Standard queueing view</h3>
+          <ul>
+            <li>Arrival rate increases: <span class="mono">lambda</span> goes up.</li>
+            <li>Utilisation increases: <span class="mono">rho = lambda E[S] / c</span>.</li>
+            <li>Waiting time grows because more jobs queue.</li>
+            <li><strong>But the service-time distribution itself is fixed.</strong></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>What the traces challenged</h3>
+          <ul>
+            <li>For several CPU-bound servers, measured <span class="mono">service_ms</span> grew with load.</li>
+            <li>That means load changed both waiting time and wall-clock service time.</li>
+            <li>So M/G/c was missing a feedback path.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Assumption under test</span><span>2</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Definitions</div>
+        <h2>The measurement distinction matters before any fitting is meaningful</h2>
+      </header>
+      <div class="content">
+        <table>
+          <tr><th>Quantity</th><th>Meaning in this project</th><th>Why it matters</th></tr>
+          <tr><td><code>service_ms</code></td><td>Server-side measured time around the compute/handler work.</td><td>This is the fitted variable for M0/M1/M2/M3.</td></tr>
+          <tr><td><code>response_ms</code></td><td>Client-observed end-to-end latency.</td><td>This is what the DES must predict.</td></tr>
+          <tr><td><code>queue_ms</code></td><td>Approximate response minus service time.</td><td>Useful diagnostically, but not the main fitted target.</td></tr>
+          <tr><td><code>rho0</code></td><td>Nominal utilisation: <code>lambda*S0/c</code>.</td><td>Cleaner independent variable for fitting load dependence.</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Measurement vocabulary</span><span>3</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Model Family</div>
+        <h2>M0, M1, and M2 are competing hypotheses about mean service time</h2>
+      </header>
+      <div class="content grid3">
+        <div class="card">
+          <h3>M0: constant</h3>
+          <div class="equation">E[S] = S0</div>
+          <p>No service-time dependence on load. This is the standard baseline.</p>
+        </div>
+        <div class="card">
+          <h3>M1: linear</h3>
+          <div class="equation">E[S] = S0 + alpha*rho0</div>
+          <p>Service time grows, but gently and approximately linearly.</p>
+        </div>
+        <div class="card">
+          <h3>M2: hyperbolic</h3>
+          <div class="equation">E[S] = S0 / (1 - beta*rho0)</div>
+          <p>Service time grows faster near saturation, motivated by time-sharing.</p>
+        </div>
+      </div>
+      <footer class="footer"><span>Fitted hypotheses</span><span>4</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Why M2?</div>
+        <h2>The hyperbolic form is not arbitrary curve decoration</h2>
+      </header>
+      <div class="content grid2">
+        <div class="card">
+          <h3>Mechanistic motivation</h3>
+          <ul>
+            <li>Under load, multiple handlers become runnable.</li>
+            <li>The OS/runtime time-slices a pinned CPU core.</li>
+            <li>Each request may perform similar CPU work, but wall-clock progress slows.</li>
+            <li>This creates Processor-Sharing-like slowdown.</li>
+          </ul>
+        </div>
+        <div class="equation">Ideal PS-like shape:
+slowdown ~= 1 / (1 - rho)
+
+Reduced form:
+E[S](rho0) = S0 / (1 - beta*rho0)
+
+beta = strength of observed slowdown</div>
+      </div>
+      <footer class="footer"><span>Interpretation, not overclaim</span><span>5</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Beta</div>
+        <h2>Beta measures how strongly wall-clock service inflates with nominal utilisation</h2>
+      </header>
+      <div class="content grid3">
+        <div class="card">
+          <h3>beta near 0</h3>
+          <p>Service time is nearly constant. M0 should be hard to beat.</p>
+        </div>
+        <div class="card">
+          <h3>0 &lt; beta &lt; 1</h3>
+          <p>Partial load dependence. Service time inflates, but less than pure ideal PS.</p>
+        </div>
+        <div class="card">
+          <h3>beta near 1</h3>
+          <p>Strong time-sharing-like slowdown. High load sharply increases measured service time.</p>
+        </div>
+      </div>
+      <div class="callout"><p><strong>Important:</strong> beta below 1 does not mean service time is smaller than the base case. It means the inflation is weaker than the beta=1 curve.</p></div>
+      <footer class="footer"><span>Parameter meaning</span><span>6</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Fitting Procedure</div>
+        <h2>The fit is done on summary-level mean service time across arrival rates</h2>
+      </header>
+      <div class="content">
+        <table>
+          <tr><th>Step</th><th>Input</th><th>Output</th></tr>
+          <tr><td>1. Collect points</td><td><code>rate_rps</code>, <code>mean_svc_ms</code>, worker count <code>c</code></td><td>One point per stable arrival-rate experiment.</td></tr>
+          <tr><td>2. Estimate base</td><td>Low-load service-time point or fitted intercept</td><td><code>S0</code>, the near-zero-load service time.</td></tr>
+          <tr><td>3. Compute nominal load</td><td><code>rho0 = lambda*S0/c</code></td><td>Independent variable not contaminated by inflated service time.</td></tr>
+          <tr><td>4. Fit M0/M1/M2</td><td>Nonlinear least squares on <code>mean_svc_ms</code></td><td><code>S0</code>, <code>alpha</code>, <code>beta</code>, AIC, R2.</td></tr>
+          <tr><td>5. Validate in DES</td><td>Fitted service model + replay arrivals</td><td>Response-time CDF and KS distance.</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>How beta is fitted</span><span>7</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">AIC</div>
+        <h2>AIC asks whether a better fit is worth the extra parameters</h2>
+      </header>
+      <div class="content grid2">
+        <div class="equation">AIC = 2k - 2 log(L)
+
+k = number of parameters
+L = likelihood of the fitted model</div>
+        <div class="card">
+          <h3>Why use it here?</h3>
+          <ul>
+            <li>M0 is simple.</li>
+            <li>M1 and M2 have extra flexibility.</li>
+            <li>AIC penalises that flexibility.</li>
+            <li>So M2 must earn its complexity by fitting noticeably better.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Model selection</span><span>8</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Service-Time Fit</div>
+        <h2>The fitted curves show which workloads violate constant service time</h2>
+      </header>
+      <div class="content">
+        <div class="figure">
+          <img src="../../results/figures/service_time_fit.png" alt="Service time fit curves">
+          <div class="caption">M0/M1/M2 service-time fits across server workloads.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>Fit plot</span><span>9</span></footer>
+    </section>
+
+    <section class="slide compact">
+      <header>
+        <div class="kicker">Fit Parameters</div>
+        <h2>Fit parameters separate affected servers, controls, and structural cases</h2>
+      </header>
+      <div class="content">
+        <table>
+          <tr><th>Server</th><th>Best service model</th><th>S0 ms</th><th>beta</th><th>R2</th><th>Readout</th></tr>
+          <tr><td>Apache DSP 1c</td><td>M1 linear</td><td>3.242</td><td>0.999</td><td>0.421</td><td>Strong growth, but finite range favours linear fit.</td></tr>
+          <tr><td>Go lognormal 1c</td><td>M1 linear</td><td>1.418</td><td>0.999</td><td>0.713</td><td>Fixed programmed work still inflates in wall-clock time.</td></tr>
+          <tr><td>Node DSP 1c</td><td>M1 linear</td><td>0.831</td><td>0.999</td><td>0.561</td><td>Single event loop still shows load-linked service shift.</td></tr>
+          <tr><td>Python DSP 1c</td><td>M0 constant</td><td>8.186</td><td>0.000</td><td>0.000</td><td>Control-like: GIL/serial execution suppresses CPU competition.</td></tr>
+          <tr><td>Node DSP 3c</td><td>M0 constant</td><td>1.068</td><td>0.031</td><td>0.041</td><td>Looks constant, but queue topology is split workers.</td></tr>
+          <tr><td>Go SQLite 3c</td><td>M2 hyperbolic</td><td>4.991</td><td>0.318</td><td>0.967</td><td>Good curve fit, interpreted cautiously as DB-lock/tandem behaviour.</td></tr>
+        </table>
+        <div class="caption">Source: <code>results/tables/service_time_fit_params.csv</code>. AIC selects the best mean-service model; beta is still shown for interpretation.</div>
+      </div>
+      <footer class="footer"><span>Parameter results</span><span>10</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Supervisor Check</div>
+        <h2>A service-time fit is not enough; it must improve response-time CDFs</h2>
+      </header>
+      <div class="content grid2">
+        <div class="card">
+          <h3>The challenge</h3>
+          <p>If M2 only fits <code>mean_svc_ms</code> but simulated response times do not improve, then it is not useful as a queueing correction.</p>
+        </div>
+        <div class="card">
+          <h3>The validation target</h3>
+          <ul>
+            <li>CDF_REF: measured response CDF.</li>
+            <li>CDF_M0: DES with constant service.</li>
+            <li>CDF_M1: DES with linear service.</li>
+            <li>CDF_M2: DES with hyperbolic service.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Why CDF validation matters</span><span>11</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">CDF Evidence</div>
+        <h2>M2 is visibly better in the cases where M0 fails</h2>
+      </header>
+      <div class="content">
+        <div class="figure">
+          <img src="../../results/figures/m2_beats_m0_cdf.png" alt="M2 beats M0 response CDF cases">
+          <div class="caption">Selected response-CDF comparisons where the load-dependent model improves over constant service.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>CDF_REF vs CDF_M0/M2</span><span>12</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Full DES Comparison</div>
+        <h2>M0, M1, and M2 are compared inside the same DES pipeline</h2>
+      </header>
+      <div class="content">
+        <div class="figure">
+          <img src="../../results/figures/des_m0_m1_m2_cdf.png" alt="M0 M1 M2 DES CDF comparison">
+          <div class="caption">Response-time CDF overlays produced by the M0/M1/M2 DES comparison.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>Distribution validation</span><span>13</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">M3 Stress Test</div>
+        <h2>M3 reframes the effect as a contention penalty instead of nested PS</h2>
+      </header>
+      <div class="content grid2">
+        <div class="equation">M3:
+E[S](rho0) =
+S0 * (1 + theta*rho0/(1-rho0))
+
+Interpretation:
+base work + contention penalty</div>
+        <div class="card">
+          <h3>Why this was useful</h3>
+          <ul>
+            <li>It answers the criticism that FCFS plus PS sounds unrealistic.</li>
+            <li>It keeps the same saturation-shaped slowdown.</li>
+            <li>It tests whether the story survives a different parameterisation.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Alternative equation</span><span>14</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">M3 Fit Plot</div>
+        <h2>The contention-penalty model fits almost the same shape as M2 in many cases</h2>
+      </header>
+      <div class="content">
+        <div class="figure">
+          <img src="../../results/figures/service_time_contention_fit.png" alt="M3 contention service-time fit">
+          <div class="caption">M0/M1/M2/M3 service-time fits. M3 is mainly an interpretation stress test, not a decisive replacement.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>M3 service-time fit</span><span>15</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">M3 Result</div>
+        <h2>M3 is defensible, but it does not clearly dominate M2</h2>
+      </header>
+      <div class="content">
+        <div class="figure">
+          <img src="../../results/figures/des_m0_m1_m2_m3_cdf.png" alt="M0 M1 M2 M3 CDF comparison">
+          <div class="caption">Adding M3 improves the interpretation but the DES evidence still supports M2 as the main correction.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>Stress test result</span><span>16</span></footer>
+    </section>
+
+    <section class="slide compact">
+      <header>
+        <div class="kicker">Full KS Summary</div>
+        <h2>Across all M0/M1/M2/M3 DES rows, M2 gives the best average KS</h2>
+      </header>
+      <div class="content grid2">
+        <div class="card">
+          <h3>Average KS distance</h3>
+          <table>
+            <tr><th>Model</th><th>Average KS</th></tr>
+            <tr><td>M0 constant</td><td>0.5126</td></tr>
+            <tr><td>M1 linear</td><td>0.5106</td></tr>
+            <tr><td>M2 hyperbolic</td><td class="good">0.4940</td></tr>
+            <tr><td>M3 contention</td><td>0.4955</td></tr>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Best-model counts</h3>
+          <table>
+            <tr><th>Best KS model</th><th>Count</th></tr>
+            <tr><td>M1</td><td>24</td></tr>
+            <tr><td>M0</td><td>15</td></tr>
+            <tr><td>M2</td><td>4</td></tr>
+            <tr><td>M3</td><td>4</td></tr>
+          </table>
+          <p>So the honest result is not universal M2 dominance; M2 improves the difficult nonlinear cases and wins on average in this comparison.</p>
+        </div>
+      </div>
+      <footer class="footer"><span>DES KS table</span><span>17</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Distribution Inspection</div>
+        <h2>The histograms show service-time distributions shifting with arrival rate</h2>
+      </header>
+      <div class="content grid2">
+        <div class="figure">
+          <img src="../../results/figures/service_time_hist_apache_dsp_1c.png" alt="Apache service-time histograms">
+          <div class="caption">Apache DSP: strong shift and heavier right tail.</div>
+        </div>
+        <div class="figure">
+          <img src="../../results/figures/service_time_hist_go_1c.png" alt="Go service-time histograms">
+          <div class="caption">Go lognormal: programmed work is fixed, but wall-clock service still shifts.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>Visual distribution evidence</span><span>18</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Boundary Histograms</div>
+        <h2>Smaller shifts and structural cases are visible too</h2>
+      </header>
+      <div class="content grid2">
+        <div class="figure">
+          <img src="../../results/figures/service_time_hist_python_dsp_3c.png" alt="Python DSP 3c service-time histograms">
+          <div class="caption">Python DSP 3c: smaller but measurable multi-worker shift.</div>
+        </div>
+        <div class="figure">
+          <img src="../../results/figures/service_time_hist_go_sqlite_3c.png" alt="Go SQLite 3c service-time histograms">
+          <div class="caption">Go SQLite 3c: interpreted as structural database-lock/tandem behaviour, not pure CPU sharing.</div>
+        </div>
+      </div>
+      <footer class="footer"><span>Boundary distributions</span><span>19</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">ANOVA</div>
+        <h2>ANOVA tests whether service time is independent of arrival rate</h2>
+      </header>
+      <div class="content grid2">
+        <div class="card">
+          <h3>Hypotheses</h3>
+          <ul>
+            <li><strong>H0:</strong> mean log service time is the same across rates.</li>
+            <li><strong>H1:</strong> at least one arrival rate has a different mean log service time.</li>
+            <li>The log transform is used because service time is right-skewed and approximately log-normal.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Interpretation rule</h3>
+          <ul>
+            <li>Large traces make tiny effects statistically significant.</li>
+            <li>So the result uses both <code>p</code>-value and effect size <code>eta^2</code>.</li>
+            <li>Strongest claim comes from ANOVA + histograms + CDF improvement together.</li>
+          </ul>
+        </div>
+      </div>
+      <footer class="footer"><span>Statistical evidence</span><span>20</span></footer>
+    </section>
+
+    <section class="slide compact">
+      <header>
+        <div class="kicker">ANOVA Results</div>
+        <h2>ANOVA result: affected workloads reject constant service with meaningful effect sizes</h2>
+      </header>
+      <div class="content">
+        <table>
+          <tr><th>Workload</th><th>Rates tested</th><th>Mean shift</th><th>log-ANOVA p</th><th>eta^2</th><th>Interpretation</th></tr>
+          <tr><td>Apache DSP 1c</td><td>10-100 rps</td><td>2.53 ms -> 51.87 ms</td><td>&lt; 1e-300</td><td class="good">0.3074</td><td>Very strong load dependence; main M0 failure case.</td></tr>
+          <tr><td>Node DSP 1c</td><td>50-1600 rps</td><td>0.64 ms -> 1.64 ms</td><td>&lt; 1e-300</td><td class="good">0.1042</td><td>Runtime/event-loop service-time shift is visible.</td></tr>
+          <tr><td>Go lognormal 1c</td><td>50-400 rps</td><td>1.22 ms -> 2.42 ms</td><td>&lt; 1e-300</td><td class="accent">0.0339</td><td>Programmed work was fixed, but wall-clock service still grew.</td></tr>
+          <tr><td>Python DSP 3c</td><td>25-300 rps</td><td>9.32 ms -> 11.44 ms</td><td>&lt; 1e-300</td><td class="accent">0.0268</td><td>Smaller but measurable multi-worker contention effect.</td></tr>
+          <tr><td>Python DSP 1c</td><td>10-75 rps</td><td>8.49 ms -> 8.18 ms</td><td>1.0e-16</td><td class="bad">0.0054</td><td>Statistically significant, but effect is tiny; treat as control-like.</td></tr>
+        </table>
+        <div class="callout"><p><strong>Read this carefully:</strong> the p-values are all tiny because the traces are large. The useful ranking comes from <code>eta^2</code>, which measures how much service-time variation is explained by arrival-rate group.</p></div>
+      </div>
+      <footer class="footer"><span>Actual ANOVA output</span><span>21</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Evidence Chain</div>
+        <h2>The final argument is deliberately multi-layered</h2>
+      </header>
+      <div class="content">
+        <table>
+          <tr><th>Evidence</th><th>What it proves</th><th>What it does not prove alone</th></tr>
+          <tr><td>Service-time fit</td><td>Mean service time changes with load.</td><td>That response-time prediction improves.</td></tr>
+          <tr><td>DES CDF comparison</td><td>M2 helps where M0 fails.</td><td>The exact physical mechanism.</td></tr>
+          <tr><td>Histograms</td><td>The distribution itself shifts, not just one noisy mean.</td><td>Formal independence rejection.</td></tr>
+          <tr><td>ANOVA on log service</td><td>Arrival rate explains service-time variation.</td><td>Queueing causality by itself.</td></tr>
+          <tr><td>M3/priority stress tests</td><td>Alternative explanations were considered.</td><td>That richer models are justified without new traces.</td></tr>
+        </table>
+      </div>
+      <footer class="footer"><span>Why the claim is defensible</span><span>22</span></footer>
+    </section>
+
+    <section class="slide">
+      <header>
+        <div class="kicker">Final Position</div>
+        <h2>The result is not "M2 always wins"; it is a diagnostic workflow</h2>
+      </header>
+      <div class="content grid2">
+        <div class="card">
+          <h3>Conservative claim</h3>
+          <ul>
+            <li>M0 is adequate for some workloads.</li>
+            <li>M2 matters where constant service fails.</li>
+            <li>M3 is a useful alternative interpretation but not a better universal model.</li>
+            <li>Priority/tandem models require new traces with real structure logged.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Thesis value</h3>
+          <p>The contribution is a tested method for discovering when service time is load-dependent, validating whether the correction improves response CDFs, and identifying when the failure is structural rather than service-time related.</p>
+        </div>
+      </div>
+      <footer class="footer"><span>Closing message</span><span>23</span></footer>
+    </section>
+  </main>
+
+  <div class="progress" id="progress"></div>
+
+  <script>
+    const deckStorageKey = "capacity_lab_service_time_fitting_deck_v1";
+    const savedDeckHtml = localStorage.getItem(deckStorageKey);
+    if (savedDeckHtml) document.querySelector(".deck").innerHTML = savedDeckHtml;
+
+    let slides = Array.from(document.querySelectorAll(".slide"));
+    const progress = document.getElementById("progress");
+    const editToggle = document.getElementById("editToggle");
+    const addBox = document.getElementById("addBox");
+    const deleteBox = document.getElementById("deleteBox");
+    const saveEdits = document.getElementById("saveEdits");
+    const resetEdits = document.getElementById("resetEdits");
+    const downloadDeck = document.getElementById("downloadDeck");
+    const editableSelector = "h1,h2,h3,p,li,td,th,strong,.equation,.kicker,.caption,.subtitle,.callout";
+    const storageKey = "capacity_lab_service_time_fitting_edits_v1";
+    let index = 0;
+    let editing = false;
+    let selectedItem = null;
+    let dragState = null;
+
+    function markMovables(root = document) {
+      root.querySelectorAll(".card,.equation,.figure,.callout,.freebox").forEach((node) => node.classList.add("movable"));
+    }
+
+    function refreshEditableNodes(root = document) {
+      Array.from(root.querySelectorAll(editableSelector))
+        .filter((node) => !node.closest(".toolbar"))
+        .forEach((node, idx) => {
+          if (!node.dataset.editId) node.dataset.editId = `edit-${idx}-${Date.now()}`;
+          node.contentEditable = editing ? "true" : "false";
+        });
+    }
+
+    function savedMap() {
+      try { return JSON.parse(localStorage.getItem(storageKey) || "{}"); }
+      catch { return {}; }
+    }
+
+    function loadEdits() {
+      const edits = savedMap();
+      document.querySelectorAll("[data-edit-id]").forEach((node) => {
+        if (Object.prototype.hasOwnProperty.call(edits, node.dataset.editId)) node.innerHTML = edits[node.dataset.editId];
+      });
+    }
+
+    function persistEdits() {
+      const edits = {};
+      document.querySelectorAll("[data-edit-id]").forEach((node) => { edits[node.dataset.editId] = node.innerHTML; });
+      localStorage.setItem(storageKey, JSON.stringify(edits));
+      localStorage.setItem(deckStorageKey, document.querySelector(".deck").innerHTML);
+    }
+
+    function setEditing(value) {
+      editing = value;
+      document.body.classList.toggle("editing", editing);
+      editToggle.classList.toggle("active", editing);
+      editToggle.textContent = editing ? "Editing" : "Edit";
+      document.querySelectorAll("[data-edit-id]").forEach((node) => { node.contentEditable = editing ? "true" : "false"; });
+    }
+
+    function activeSlide() { return slides[index]; }
+
+    function selectItem(node) {
+      if (selectedItem) selectedItem.classList.remove("selected");
+      selectedItem = node && node.closest(".movable");
+      if (selectedItem) selectedItem.classList.add("selected");
+    }
+
+    function addTextBox() {
+      const box = document.createElement("div");
+      box.className = "freebox movable";
+      box.dataset.editId = `free-${Date.now()}`;
+      box.contentEditable = editing ? "true" : "false";
+      box.innerHTML = "New editable text";
+      activeSlide().appendChild(box);
+      selectItem(box);
+      refreshEditableNodes(box);
+    }
+
+    function deleteSelected() {
+      if (!selectedItem) return;
+      selectedItem.remove();
+      selectedItem = null;
+    }
+
+    function beginDrag(event) {
+      if (!editing || !event.shiftKey) return;
+      const target = event.target.closest(".movable");
+      if (!target || target.closest(".toolbar")) return;
+      event.preventDefault();
+      selectItem(target);
+      const rect = target.getBoundingClientRect();
+      const slideRect = target.closest(".slide").getBoundingClientRect();
+      target.style.position = "absolute";
+      target.style.width = `${rect.width}px`;
+      target.style.left = `${rect.left - slideRect.left}px`;
+      target.style.top = `${rect.top - slideRect.top}px`;
+      target.classList.add("dragging");
+      dragState = { node: target, slideRect, dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+    }
+
+    function moveDrag(event) {
+      if (!dragState) return;
+      dragState.node.style.left = `${Math.max(0, event.clientX - dragState.slideRect.left - dragState.dx)}px`;
+      dragState.node.style.top = `${Math.max(0, event.clientY - dragState.slideRect.top - dragState.dy)}px`;
+    }
+
+    function endDrag() {
+      if (!dragState) return;
+      dragState.node.classList.remove("dragging");
+      dragState = null;
+    }
+
+    function show(i) {
+      slides = Array.from(document.querySelectorAll(".slide"));
+      index = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((slide, idx) => slide.classList.toggle("active", idx === index));
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      history.replaceState(null, "", `#${index + 1}`);
+    }
+
+    function fromHash() {
+      const n = Number(location.hash.replace("#", ""));
+      if (Number.isFinite(n) && n >= 1) index = n - 1;
+    }
+
+    refreshEditableNodes();
+    markMovables();
+    loadEdits();
+    fromHash();
+    show(index);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() === "e" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (!document.activeElement || document.activeElement.contentEditable !== "true") setEditing(!editing);
+        return;
+      }
+      if (editing && document.activeElement && document.activeElement.contentEditable === "true") return;
+      if (["ArrowRight", "PageDown", " "].includes(event.key)) show(index + 1);
+      if (["ArrowLeft", "PageUp", "Backspace"].includes(event.key)) show(index - 1);
+      if (event.key === "Home") show(0);
+      if (event.key === "End") show(slides.length - 1);
+    });
+    document.addEventListener("click", (event) => { if (!editing && !event.target.closest(".toolbar")) show(index + 1); });
+    document.addEventListener("mousedown", (event) => {
+      if (editing && event.target.closest(".movable") && !event.target.closest(".toolbar")) selectItem(event.target);
+      beginDrag(event);
+    });
+    document.addEventListener("mousemove", moveDrag);
+    document.addEventListener("mouseup", endDrag);
+    editToggle.addEventListener("click", () => setEditing(!editing));
+    addBox.addEventListener("click", addTextBox);
+    deleteBox.addEventListener("click", deleteSelected);
+    saveEdits.addEventListener("click", persistEdits);
+    resetEdits.addEventListener("click", () => {
+      localStorage.removeItem(storageKey);
+      localStorage.removeItem(deckStorageKey);
+      location.reload();
+    });
+    downloadDeck.addEventListener("click", () => {
+      persistEdits();
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelectorAll("[contenteditable]").forEach((node) => node.removeAttribute("contenteditable"));
+      const html = "<!doctype html>\n" + clone.outerHTML;
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "service_time_fitting_slides_edited.html";
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
+

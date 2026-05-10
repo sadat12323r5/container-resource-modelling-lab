@@ -162,6 +162,17 @@ The load-dependent fitting scripts compare three candidate service-time models:
 | `M1` | Linear growth with utilisation |
 | `M2` | Hyperbolic growth: `E[S] = S0 / (1 - beta*rho0)` |
 
+An exploratory `M3` variant was also tested:
+
+```text
+M3: E[S] = S0 * (1 + theta*rho0/(1-rho0))
+```
+
+`M3` interprets the extra wall-clock service time as a CPU-contention penalty
+rather than a literal Processor-Sharing queue hidden inside an FCFS queue. It is
+useful as a robustness check, but `M2` remains the main reported model because
+it performs slightly better overall in response-CDF KS distance.
+
 The selected model is chosen using AIC, the **Akaike Information Criterion**.
 AIC rewards better fit but penalises extra parameters, so a more complex model
 is only selected if it improves the fit enough to justify the added complexity.
@@ -197,6 +208,12 @@ Some server-specific terms appear throughout the results:
 - **HPA**: Kubernetes Horizontal Pod Autoscaler. It reacts to current overload;
   the future work proposed here is a feedforward loop that forecasts demand and
   scales before queues build.
+- **Preemptive resume priority**: a priority model where a high-priority job can
+  interrupt a low-priority job, and the low-priority job later resumes from the
+  remaining service.
+- **Feedback queue**: a model where a job can return to a queue after partial
+  service, such as a DSP job receiving an initial CPU quantum and then
+  re-entering as lower-priority continuation work.
 
 ---
 
@@ -248,6 +265,14 @@ does not behave like a shared M/G/3 queue; it is closer to three independent
 M/G/1 queues with load balancing/Bernoulli splitting. These findings define the
 next modelling direction more sharply than the original milestone plan.
 
+Two explicit scheduling alternatives were also implemented as an exploratory
+stress test: a preemptive-resume priority DES and a feedback-priority DES. They
+improve over plain FCFS M0 in some selected traces, but they do not outperform
+the existing M2 load-dependent correction overall. This is useful negative
+evidence: priority/feedback models should be pursued in Thesis C only after
+building new two-class traces where priority classes and feedback visits are
+actually logged.
+
 ### Progress Against Milestones
 
 | Milestone | Planned outcome | Current progress |
@@ -257,7 +282,7 @@ next modelling direction more sharply than the original milestone plan.
 | Multi-worker DES | Extend to M/G/c and compare multicore scaling | **Complete.** Heap-based M/G/c simulator validates Node.js, Python, Java, and Go SQLite 3-core variants; scaling differences are measured and explained. |
 | ML baseline | Compare queueing/DES against a simple data-driven predictor | **Partially complete.** Polynomial LOOCV baseline exists for Go response p99; full MLASP pipeline is still open. |
 | Load-dependent service model | Not originally a formal milestone | **New contribution.** Fitted `E[S] = S0 / (1 - beta*rho0)` style models and implemented load-dependent DES, explaining CPU-bound service-time inflation. |
-| Structural model extensions | Queueing networks and richer architectures | **Defined, not implemented.** Go SQLite suggests a two-stage tandem queue; Node.js cluster suggests split M/G/1 queues rather than shared M/G/3. |
+| Structural model extensions | Queueing networks and richer architectures | **Exploratory validation added.** Go SQLite suggests a two-stage tandem queue; Node.js cluster suggests split M/G/1 queues; priority/preemptive-resume and feedback DES variants were implemented but did not beat M2 overall on current one-class traces. |
 | Thesis/report consolidation | Turn experiments into reusable artefacts and thesis material | **In progress.** Results, CDF overlays, fit plots, per-server summaries, and the modular workspace are ready; formal thesis chapters and teaching worksheets remain to be written. |
 
 Overall, the project is ahead of the original DES validation milestones and has
@@ -332,6 +357,33 @@ are Python DSP 3-core at 200 rps, Apache DSP 1-core at 75 rps, and Go lognormal
 1-core at 200 rps. These are the key thesis cases because they show why a new
 load-dependent model is needed: the standard M0 DES uses the wrong service-time
 mean and therefore places the response-time CDF in the wrong location.
+
+#### Exploratory Priority and Feedback Models
+
+![Exploratory priority and feedback DES CDF comparison](results/figures/des_priority_exploratory_cdf.png)
+
+This figure tests two richer scheduling explanations suggested during the
+supervisor discussion: a preemptive-resume priority M/G/1 model and a feedback
+priority model. The current traces do not label real priority classes or
+feedback visits, so the validation is exploratory: synthetic high-priority work
+and service quanta are swept and compared using the same response-CDF KS
+distance.
+
+The result is conservative. On selected high-mismatch traces, the explicit
+priority models improve over plain FCFS M0 in some cases, but do not beat M2
+overall:
+
+| Model | Average KS on selected traces |
+|---|---:|
+| FCFS M0 | 0.4199 |
+| M2 load-dependent | 0.3727 |
+| Preemptive-resume priority | 0.4054 |
+| Feedback priority | 0.4215 |
+
+This keeps M2 as the main Thesis B model while making the Thesis C path clearer:
+to develop priority/preemptive-resume models properly, the next experiment must
+create real two-class traces, e.g. `/short` high-priority requests mixed with
+`/dsp` low-priority requests, and log request class and feedback visits.
 
 #### Service-Time Histograms By Arrival Rate
 
@@ -510,13 +562,15 @@ the modelling direction changed, and what remains to ask the supervisor.
 
 | File | What it contains |
 |---|---|
+| `docs/latex/thesis/introduction.tex` | Thesis C introduction: current research problem, platform, model family, validation evidence, boundary cases, and chapter structure. |
+| `docs/latex/thesis/aims_objectives.tex` | Thesis C aims, research questions, objectives, scope, and claim boundaries. |
 | `docs/latex/thesis/research_journey.tex` | Chronological account of the project difficulties and pivots: CPU pinning, Apache routing, PHP timing reconstruction, CSV corruption, Go saturation/rejections, Java JIT warm-up, DES performance fixes, Node cluster mismatch, Go SQLite tandem-queue discovery, the D-13/D-14 load-dependent service-time finding, and the D-16 supervisor follow-up that forced the M0/M1/M2 CDF and ANOVA validation. |
 | `docs/latex/thesis/methodology_b.tex` | Experimental platform and multi-server methodology: server catalogue, runtime concurrency models, Poisson load generation, trace/summary CSV schema, batch DES replay, lognormal parameterisation, KS validation, and visualiser/live-load tooling. |
-| `docs/latex/thesis/loaddep_model.tex` | Load-dependent service-time model: why constant-service-time M/G/c fails, OS-level processor-sharing explanation, M0/M1/M2 candidate fits, AIC selection, beta table, Java JIT anomaly, Node 3-core structural mismatch, M0/M1/M2 DES response-CDF validation, service-time histograms, and ANOVA interpretation. |
+| `docs/latex/thesis/loaddep_model.tex` | Load-dependent service-time model: why constant-service-time M/G/c fails, OS-level processor-sharing explanation, M0/M1/M2 candidate fits, AIC selection, beta table, Java JIT anomaly, Node 3-core structural mismatch, M0/M1/M2 DES response-CDF validation, service-time histograms, ANOVA interpretation, and exploratory priority/feedback validation. |
 | `docs/latex/thesis/conclusion_b.tex` | Thesis B conclusion and future work: contributions, limitations, MLASP comparison, why service-time ML was replaced by the mechanistic beta model, why ML remains useful for arrival-rate forecasting, industrial scalability, Kubernetes HPA/feedforward autoscaling relevance, and candidate Thesis C models. |
 | `docs/latex/thesis/mywork.tex` | Updated literature review positioning: MLASP comparison, high-value open gaps in capacity planning, and the corrected explanation of how the Thesis A ML-DES plan evolved into the current mechanistic beta + future arrival-forecasting approach. |
 | `docs/DIFFICULTIES.md` | Raw research/debugging log that backs the `research_journey.tex` chapter. This is the detailed source of the mishaps, fixes, and discoveries. |
-| `docs/slides/thesis_b_slides.html` | Browser-based Thesis B progress deck covering motivation, platform progress, research pivot, M0/M1/M2 validation, histograms, ANOVA, limitations, and Thesis C directions. |
+| `docs/slides/thesis_b_slides.html` | Browser-based Thesis B progress deck covering motivation, platform progress, research pivot, M0/M1/M2 validation, M3 stress test, priority/feedback validation, histograms, ANOVA, limitations, and Thesis C directions. |
 
 The key supervisor discussion point is documented in the conclusion and future
 work sections: first present the finding that CPU-bound containerised servers
@@ -808,8 +862,8 @@ replay. Requires `data/experiments/go_1c/` data.
 ### Step 7 - Regenerate load-dependent service-time results
 
 These commands reproduce the cross-server service-time fits, load-dependent DES
-results, M0/M1/M2 comparison, supervisor follow-up plots, and ANOVA table in
-`results/`:
+results, M0/M1/M2 comparison, supervisor follow-up plots, ANOVA table, M3
+contention check, and exploratory priority/feedback validation in `results/`:
 
 ```bash
 python analysis/des/fit_service_time.py
@@ -817,6 +871,9 @@ python analysis/des/des_load_dependent.py
 python analysis/des/des_m0_m1_m2_compare.py
 python analysis/des/plot_supervisor_followup.py
 python analysis/des/anova_service_time.py
+python analysis/des/fit_service_time_contention.py
+python analysis/des/des_m0_m1_m2_m3_compare.py
+python analysis/des/des_priority_exploratory.py
 ```
 
 Outputs:
@@ -825,11 +882,17 @@ Outputs:
 results/tables/service_time_fit_params.csv
 results/tables/des_ld_results.csv
 results/tables/des_m0_m1_m2_results.csv
+results/tables/des_m0_m1_m2_m3_results.csv
+results/tables/des_priority_exploratory_results.csv
 results/tables/m2_beats_m0_cases.csv
 results/tables/service_time_anova.csv
+results/tables/service_time_contention_fit_params.csv
 results/figures/service_time_fit.png
+results/figures/service_time_contention_fit.png
 results/figures/des_ld_cdf.png
 results/figures/des_m0_m1_m2_cdf.png
+results/figures/des_m0_m1_m2_m3_cdf.png
+results/figures/des_priority_exploratory_cdf.png
 results/figures/m2_beats_m0_cdf.png
 results/figures/service_time_hist_apache_dsp_1c.png
 results/figures/service_time_hist_go_1c.png
@@ -843,6 +906,9 @@ then compares `CDF_REF`, `CDF_M0`, `CDF_M1`, and `CDF_M2` using KS distance on
 the response-time CDF. `plot_supervisor_followup.py` extracts the clearest
 M2-over-M0 cases and plots service-time histograms. `anova_service_time.py`
 tests whether `log(service_ms)` depends on arrival rate.
+`fit_service_time_contention.py` and `des_m0_m1_m2_m3_compare.py` test the M3
+contention-penalty reformulation. `des_priority_exploratory.py` tests the
+preemptive-resume and feedback-priority alternatives on selected traces.
 
 ---
 

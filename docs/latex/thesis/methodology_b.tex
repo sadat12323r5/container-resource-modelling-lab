@@ -1,9 +1,9 @@
-\chapter{Experimental Platform and Multi-Server Methodology}
+﻿\chapter{Experimental Platform and Multi-Server Methodology}
 \label{ch:methodology_b}
 
 \section{Overview}
 
-Thesis~A established that a single Dockerised microservice can exhibit realistic capacity-planning phenomena — growing mean latency, sharp tail-latency amplification, and eventual CPU saturation — on commodity hardware. Thesis~B expands that foundation into a systematic, multi-server experimental programme. Nine distinct server implementations across five languages and two concurrency configurations are subjected to open-loop load testing at a range of arrival rates, and the resulting traces are used both to challenge and to extend classical M/G/$c$ queueing assumptions.
+This chapter describes the experimental platform used to collect the traces analysed in the rest of the thesis. The platform began as a single Dockerised microservice for observing basic capacity-planning phenomena: growing mean latency, queue formation, and CPU saturation on commodity hardware. It was then expanded into a systematic multi-server experimental programme. Nine distinct server implementations across five languages and two concurrency configurations are subjected to open-loop load testing at a range of arrival rates, and the resulting traces are used both to challenge and to extend classical M/G/$c$ queueing assumptions.
 
 The core research question that emerged from this expanded programme is:
 
@@ -11,7 +11,7 @@ The core research question that emerged from this expanded programme is:
 \emph{Does the M/G/$c$ model's constant-service-time assumption hold for real containerised microservices, and if not, how can the model be corrected?}
 \end{quote}
 
-The answer — that mean service time grows with utilisation for CPU-bound servers — constitutes the central modelling contribution of this thesis.
+The answer -- that mean service time grows with utilisation for CPU-bound servers -- constitutes the central modelling contribution of this thesis.
 
 %-------------------------------------------------------------
 \section{Server Catalogue}
@@ -21,7 +21,7 @@ Nine server types were deployed, covering a representative cross-section of lang
 
 \begin{table}[h]
 \centering
-\caption{Server implementations used in Thesis~B experiments. Column $c$ is the number of concurrent workers modelled in the M/G/$c$ DES.}
+\caption{Server implementations used in the experiments. Column $c$ is the number of concurrent workers modelled in the M/G/$c$ DES.}
 \label{tab:server-catalogue}
 \begin{tabular}{l l c l}
 \toprule
@@ -57,11 +57,11 @@ For each server, experiments were run at a range of arrival rates from low load 
 Each experiment produces a per-request CSV trace with the following columns:
 
 \begin{itemize}
-    \item \texttt{arrival\_unix\_ns} — absolute arrival timestamp in nanoseconds;
-    \item \texttt{response\_ms} — end-to-end response time observed by the client;
-    \item \texttt{service\_ms} — server-side processing time (measured within the handler using high-resolution timers where available);
-    \item \texttt{queue\_ms} — inferred queueing delay (\texttt{response\_ms} $-$ \texttt{service\_ms});
-    \item \texttt{status\_code} — HTTP status; non-2xx rows are excluded from analysis.
+    \item \texttt{arrival\_unix\_ns} -- absolute arrival timestamp in nanoseconds;
+    \item \texttt{response\_ms} -- end-to-end response time observed by the client;
+    \item \texttt{service\_ms} -- server-side processing time (measured within the handler using high-resolution timers where available);
+    \item \texttt{queue\_ms} -- inferred queueing delay (\texttt{response\_ms} $-$ \texttt{service\_ms});
+    \item \texttt{status\_code} -- HTTP status; non-2xx rows are excluded from analysis.
 \end{itemize}
 
 \subsection{Summary Statistics}
@@ -72,7 +72,7 @@ For each server $\times$ rate combination, a summary CSV records aggregate stati
 \section{Concurrency Models}
 \label{sec:concurrency}
 
-A key design decision in applying M/G/$c$ is determining the correct value of $c$ — the number of parallel servers — for each implementation.
+A key design decision in applying M/G/$c$ is determining the correct value of $c$ -- the number of parallel servers -- for each implementation.
 
 \paragraph{Apache \texttt{mpm\_prefork}.}
 Each incoming HTTP connection spawns a dedicated OS process. When the container is pinned to a single CPU core, these processes compete for the core through OS preemption: the kernel time-slices among all active handler processes. This is a Processor Sharing (PS) discipline at the OS level, even though the application sees FCFS at the queue. The effective concurrency is $c = 1$ (one physical core), but the OS interleaves service among multiple simultaneous requests.
@@ -123,6 +123,19 @@ For each stable trace, the same arrival sequence is replayed through three DES v
 
 The output table \texttt{results/tables/des\_m0\_m1\_m2\_results.csv} records the KS distance from the measured response-time CDF for each model. A follow-up script, \texttt{analysis/des/plot\_supervisor\_followup.py}, extracts the clearest cases where M2 improves on M0 and plots them in \texttt{results/figures/m2\_beats\_m0\_cdf.png}. This comparison is important because a service-time model should not only fit measured service times; it should also improve the simulated response-time distribution.
 
+\subsection{Exploratory Priority and Feedback DES}
+
+After the supervisor discussion, two richer scheduling structures were also implemented as exploratory DES variants in \texttt{analysis/des/des\_priority\_exploratory.py}. These are not treated as final models because the existing traces do not contain explicit priority-class labels or feedback-visit identifiers. Their purpose is to test whether a more explicit scheduling interpretation is promising enough to justify new follow-up experiments.
+
+The two exploratory models are:
+
+\begin{itemize}
+    \item \textbf{Preemptive-resume priority M/G/1}: observed DSP jobs are treated as low-priority class-2 jobs. A synthetic short class-1 stream is generated as high-priority work. When class-1 work arrives during a DSP job, the DSP job is preempted and later resumes with its remaining service.
+    \item \textbf{Feedback priority queue}: each DSP job receives an initial high-priority CPU quantum. If work remains after that quantum, the job feeds back into a low-priority continuation queue.
+\end{itemize}
+
+Both models are validated using the same response-CDF and KS-distance procedure as the M0/M1/M2 experiments. The exploratory comparison therefore asks a narrow question: do explicit priority or feedback mechanisms explain the measured DSP response CDF better than the one-stage FCFS model or the M2 load-dependent correction? The answer is documented in Section~\ref{sec:priority-exploratory}: these models improve over plain FCFS M0 in some selected traces but do not outperform M2 overall.
+
 \subsection{Lognormal Service Time Parameterisation}
 
 Service times are sampled from a Lognormal distribution parameterised by mean $\mu_S$ and coefficient of variation $\text{CV}$:
@@ -136,7 +149,7 @@ The CV is estimated once per server from the lowest-load trace (where queueing d
 
 \subsection{Validation Metric: KS Distance}
 
-The Kolmogorov–Smirnov (KS) distance between two empirical distributions $F_1$ and $F_2$ is:
+The Kolmogorov--Smirnov (KS) distance between two empirical distributions $F_1$ and $F_2$ is:
 
 \[
 d_\text{KS} = \sup_x |F_1(x) - F_2(x)|.
@@ -160,3 +173,4 @@ A browser-based visualiser (\texttt{visualiser.html}) allows interactive explora
     \item Gantt timeline panel: replays the loaded trace with server assignment shown as coloured bars, with a DES shadow for comparison;
     \item live experiment mode: a WebSocket backend (\texttt{vis\_server.py}) fires real HTTP requests at any running Docker server and streams per-request timings into the browser in real time.
 \end{itemize}
+
